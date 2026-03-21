@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 from urllib.parse import unquote_plus
 
-from suning_biu_ha import SuningSmartHomeClient, parse_jsonp_or_json
-from suning_biu_ha.client import (
+from xiaobiu import SuningSmartHomeClient, parse_jsonp_or_json
+from xiaobiu.client import (
   CaptchaRequiredError,
   CaptchaSolution,
   DEVICE_LIST_URL,
@@ -25,8 +25,8 @@ from suning_biu_ha.client import (
   main as client_main,
   parse_login_page_config,
 )
-from suning_biu_ha.crypto import SuAESCipher
-from suning_biu_ha.models import CaptchaBridgeResult
+from xiaobiu.crypto import SuAESCipher
+from xiaobiu.models import CaptchaBridgeResult
 
 SAMPLE_LOGIN_PAGE = """
 <script>
@@ -115,7 +115,7 @@ def test_send_sms_with_iar_updates_risk_context(monkeypatch) -> None:
 
   monkeypatch.setattr(client, "send_sms_code", fake_send_sms_code)
   monkeypatch.setattr(
-    "suning_biu_ha.client._obtain_iar_captcha_result",
+    "xiaobiu.client._obtain_iar_captcha_result",
     lambda *_args, **_kwargs: CaptchaBridgeResult(
       token="iar-token",
       detect="browser-detect",
@@ -518,9 +518,9 @@ def test_send_sms_code_raises_sms_rate_limited_error(monkeypatch) -> None:
 def test_login_main_reports_sms_rate_limited(monkeypatch, capsys) -> None:
   fake_client = object()
 
-  monkeypatch.setattr("suning_biu_ha.client._client_from_args", lambda _args: fake_client)
+  monkeypatch.setattr("xiaobiu.client._client_from_args", lambda _args: fake_client)
   monkeypatch.setattr(
-    "suning_biu_ha.client._interactive_login",
+    "xiaobiu.client._interactive_login",
     lambda *_args, **_kwargs: (_ for _ in ()).throw(
       SmsRateLimitedError("验证码发送失败，请稍后重试(00201)")
     ),

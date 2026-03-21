@@ -1,4 +1,4 @@
-# suning-biu-ha
+# python-xiaobiu
 
 Python client for Suning smart home SMS login and session management.
 
@@ -7,13 +7,13 @@ Used by the [ha-suning](https://github.com/FaintGhost/ha-suning) Home Assistant 
 ## Install
 
 ```bash
-pip install suning-biu-ha
+pip install python-xiaobiu
 ```
 
 ## Usage
 
 ```python
-from suning_biu_ha import CaptchaRequiredError, SuningSmartHomeClient
+from xiaobiu import CaptchaRequiredError, SuningSmartHomeClient
 
 client = SuningSmartHomeClient(state_path=".suning-session.json")
 
@@ -30,20 +30,20 @@ print(client.list_family_infos())
 
 ```bash
 # Interactive login
-suning-biu-ha login --phone 13800000000 --state-file .suning-session.json
+xiaobiucli login --phone 13800000000 --state-file .suning-session.json
 
 # Send SMS only
-suning-biu-ha send-sms --phone 13800000000 --state-file .suning-session.json
+xiaobiucli send-sms --phone 13800000000 --state-file .suning-session.json
 
 # Check session
-suning-biu-ha check --state-file .suning-session.json
+xiaobiucli check --state-file .suning-session.json
 
 # List families / devices
-suning-biu-ha families --state-file .suning-session.json
-suning-biu-ha devices --family-id 37790 --state-file .suning-session.json
+xiaobiucli families --state-file .suning-session.json
+xiaobiucli devices --family-id 37790 --state-file .suning-session.json
 ```
 
 ## Requirements
 
-- Python >= 3.12
+- Python >= 3.14
 - `cryptography`, `pydantic`, `requests`

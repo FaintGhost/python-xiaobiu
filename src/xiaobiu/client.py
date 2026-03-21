@@ -1262,7 +1262,7 @@ def _build_parser() -> argparse.ArgumentParser:
     target.add_argument("--detect")
     target.add_argument("--dfp-token")
 
-  parser = argparse.ArgumentParser(prog="suning-biu-ha")
+  parser = argparse.ArgumentParser(prog="xiaobiucli")
   add_shared_arguments(parser)
   subparsers = parser.add_subparsers(dest="command", required=True)
 
