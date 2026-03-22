@@ -3,8 +3,11 @@ from __future__ import annotations
 import json
 from urllib.parse import unquote_plus
 
+import pytest
+
 from xiaobiu import SuningSmartHomeClient, parse_jsonp_or_json
 from xiaobiu.client import (
+  AuthenticationError,
   CaptchaRequiredError,
   CaptchaSolution,
   DEVICE_LIST_URL,
@@ -368,6 +371,52 @@ def test_list_devices_builds_dynamic_signed_request(monkeypatch) -> None:
   assert payload["responseCode"] == "0"
 
 
+def test_request_app_api_rehydrates_shcss_before_itapig(monkeypatch) -> None:
+  client = SuningSmartHomeClient()
+  calls: list[tuple[str, str]] = []
+  bootstrap_calls: list[str] = []
+
+  class RedirectResponse:
+    status_code = 302
+    headers = {"Location": "https://passport.suning.com/ids/login?service=itapig"}
+
+  class SuccessResponse:
+    status_code = 200
+    headers: dict[str, str] = {}
+
+  def fake_request(method: str, url: str, **kwargs):
+    calls.append((method, url))
+    if len(calls) == 1:
+      return RedirectResponse()
+    return SuccessResponse()
+
+  monkeypatch.setattr(client.session, "request", fake_request)
+  monkeypatch.setattr(client, "bootstrap_service", lambda service_name: bootstrap_calls.append(service_name))
+
+  response = client._request_app_api(FAMILY_LIST_URL)  # noqa: SLF001
+
+  assert response.status_code == 200
+  assert calls == [("POST", FAMILY_LIST_URL), ("POST", FAMILY_LIST_URL)]
+  assert bootstrap_calls == ["shcss", "itapig"]
+
+
+def test_request_app_api_raises_after_failed_rebootstrap(monkeypatch) -> None:
+  client = SuningSmartHomeClient()
+  bootstrap_calls: list[str] = []
+
+  class RedirectResponse:
+    status_code = 302
+    headers = {"Location": "https://passport.suning.com/ids/login?service=itapig"}
+
+  monkeypatch.setattr(client.session, "request", lambda *_args, **_kwargs: RedirectResponse())
+  monkeypatch.setattr(client, "bootstrap_service", lambda service_name: bootstrap_calls.append(service_name))
+
+  with pytest.raises(AuthenticationError, match="itapig service bootstrap failed"):
+    client._request_app_api(FAMILY_LIST_URL)  # noqa: SLF001
+
+  assert bootstrap_calls == ["shcss", "itapig"]
+
+
 def test_prepare_sms_login_uses_mobile_post_form(monkeypatch) -> None:
   client = SuningSmartHomeClient()
   cipher = SuAESCipher()
@@ -594,6 +643,22 @@ def test_list_family_infos_parses_expected_payload_shape(monkeypatch) -> None:
   assert len(families) == 1
   assert families[0].family_id == "37790"
   assert families[0].name == "我的家"
+
+
+def test_keep_alive_only_queries_member_info(monkeypatch) -> None:
+  client = SuningSmartHomeClient()
+  member_payload = {"code": "0", "desc": "SUCCESS"}
+
+  monkeypatch.setattr(client, "query_member_base_info", lambda: member_payload)
+  monkeypatch.setattr(
+    client,
+    "list_families",
+    lambda: (_ for _ in ()).throw(AssertionError("keep_alive should not call list_families")),
+  )
+
+  payload = client.keep_alive()
+
+  assert payload == {"member": member_payload}
 
 
 def test_list_family_infos_accepts_id_field_from_live_api(monkeypatch) -> None:

@@ -632,6 +632,7 @@ class SuningSmartHomeClient:
 
     response = send_request()
     if self._is_login_redirect(response):
+      self.bootstrap_service("shcss")
       self.bootstrap_service("itapig")
       response = send_request()
     if self._is_login_redirect(response):
@@ -885,10 +886,8 @@ class SuningSmartHomeClient:
 
   def keep_alive(self) -> dict[str, Any]:
     member_info = self.query_member_base_info()
-    family_info = self.list_families()
     return {
       "member": member_info,
-      "families": family_info,
     }
 
   def save_state(self) -> None:
