@@ -9,7 +9,7 @@ import json
 import re
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import urlsplit
 from uuid import uuid4
 
@@ -23,11 +23,17 @@ from .models import (
   AuthState,
   CaptchaSolution,
   FamilyInfo,
+  FanSpeed,
   HAClimatePreview,
+  HvacMode,
   LoginPageConfig,
+  PanelTemplate,
   PersistedSessionState,
+  PresetMode,
   SerializedCookie,
   SignedRequestTemplate,
+  SwingMode,
+  Timer,
 )
 
 DEFAULT_LOGIN_URL = "https://passport.suning.com/ids/login"
@@ -750,6 +756,133 @@ class SuningSmartHomeClient:
       if self._is_air_conditioner_device(device)
     ]
 
+  def _resolve_ac_target(
+    self,
+    family_id: str | int,
+    device_id: str | int | None,
+  ) -> tuple[str, str]:
+    """Return ``(device_id, model_id)`` for a control command."""
+
+    from .models import PanelTemplate, Timer  # noqa: F401  (typing re-export)
+
+    device = self.get_device(family_id, device_id=str(device_id) if device_id else None)
+    actual_id = str(device.get("id") or "")
+    model_id = str(device.get("modelId") or "")
+    if not actual_id or not model_id:
+      raise SuningError("设备信息缺少 id 或 modelId，无法下发控制命令。")
+    return actual_id, model_id
+
+  def app_oper(
+    self,
+    device_id: str,
+    model_id: str,
+    cmd: Mapping[str, Any],
+  ) -> dict[str, Any]:
+    """Send a single ``appOper`` command to the device."""
+
+    from . import ac_control
+
+    return ac_control.app_oper(self, device_id, model_id, dict(cmd))
+
+  def turn_on(self, family_id: str | int, device_id: str | int) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.turn_on(self, target_device, model_id)
+
+  def turn_off(self, family_id: str | int, device_id: str | int) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.turn_off(self, target_device, model_id)
+
+  def set_hvac_mode(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    mode: HvacMode,
+  ) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.set_hvac_mode(self, target_device, model_id, mode)
+
+  def set_temperature(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    value: float,
+  ) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.set_temperature(self, target_device, model_id, value)
+
+  def set_fan_mode(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    speed: FanSpeed,
+  ) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.set_fan_mode(self, target_device, model_id, speed)
+
+  def set_swing_mode(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    swing: SwingMode,
+  ) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.set_swing_mode(self, target_device, model_id, swing)
+
+  def set_preset_mode(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    preset: PresetMode,
+  ) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.set_preset_mode(self, target_device, model_id, preset)
+
+  def set_electric_heating(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    *,
+    on: bool,
+  ) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.set_electric_heating(self, target_device, model_id, on=on)
+
+  def list_device_timers(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+  ) -> list:
+    from . import ac_control
+
+    target_device, _ = self._resolve_ac_target(family_id, device_id)
+    return ac_control.list_device_timers(self, target_device)
+
+  def get_device_panel_template(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+  ):
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.get_device_panel_template(self, target_device, model_id)
+
   def _normalize_air_conditioner_status(self, device: dict[str, Any]) -> AirConditionerStatus:
     raw_status = device.get("status") or {}
     online_flag = _coalesce(raw_status.get("onlineStatus"), device.get("online"))
@@ -775,6 +908,10 @@ class SuningSmartHomeClient:
     electric_heating_enabled = _parse_bool_flag(
       _coalesce(raw_status.get("SN_ELECHEATING"), raw_status.get("C_ELECHEATING"))
     )
+    mode_raw = _coalesce(raw_status.get("SN_MODE"), raw_status.get("C_MODE"))
+    # Only infer hvac_mode for reachable devices; an offline AC has
+    # no meaningful mode state to surface in the HA preview.
+    hvac_mode = self._infer_hvac_mode(power_on=power_on, mode_raw=mode_raw) if online else None
 
     status = AirConditionerStatus(
       device_id=str(device.get("id")),
@@ -790,10 +927,11 @@ class SuningSmartHomeClient:
       device_record_time=device.get("time"),
       refresh_time=raw_status.get("refreshTime"),
       power_on=power_on,
+      hvac_mode=hvac_mode,
       current_temperature=current_temperature,
       target_temperature=target_temperature,
       outdoor_temperature=outdoor_temperature,
-      mode_raw=_coalesce(raw_status.get("SN_MODE"), raw_status.get("C_MODE")),
+      mode_raw=mode_raw,
       fan_mode_raw=_coalesce(raw_status.get("SN_FANSPEED"), raw_status.get("C_FANSPEED")),
       swing_horizontal=swing_horizontal,
       swing_vertical=swing_vertical,
@@ -809,6 +947,23 @@ class SuningSmartHomeClient:
       update={"ha_climate_preview": self._build_ha_climate_preview(status)}
     )
 
+  def _infer_hvac_mode(
+    self,
+    *,
+    power_on: bool | None,
+    mode_raw: Any,
+  ) -> HvacMode | None:
+    """Translate raw status fields into a typed :class:`HvacMode`.
+
+    ``power_on is False`` always wins; otherwise the value depends on a
+    known ``C_MODE`` (or ``SN_MODE`` fallback) raw value.  Unknown mode
+    values collapse to ``None`` so the HA preview stays ``unavailable``.
+    """
+
+    from . import ac_control
+
+    return ac_control.infer_hvac_mode(power_on=power_on, mode_raw=mode_raw)
+
   def _is_air_conditioner_device(self, device: dict[str, Any]) -> bool:
     return str(device.get("categoryId")) == AIR_CONDITIONER_CATEGORY_ID or (
       AIR_CONDITIONER_NAME_KEYWORD in str(device.get("name", ""))
@@ -816,19 +971,22 @@ class SuningSmartHomeClient:
 
   def _build_ha_climate_preview(self, status: AirConditionerStatus) -> HAClimatePreview:
     notes: list[str] = []
-    hvac_mode: str | None = None
     if not status.available:
       notes.append("设备当前离线，Home Assistant 中应标记为 unavailable。")
     elif status.power_on is False:
-      hvac_mode = "off"
-
-    if status.power_on is True:
-      notes.append("设备当前上报为开机，但模式枚举尚未确认，暂不映射标准 HVACMode。")
+      notes.append("设备已关机（power_on=false），Home Assistant 中应映射为 off。")
     elif status.power_on is None:
       notes.append("未能从原始字段中稳定解析电源状态。")
 
-    if status.mode_raw is not None:
-      notes.append(f"原始模式值为 {status.mode_raw}，后续需要控制抓包后确认枚举含义。")
+    if status.hvac_mode is None and status.power_on is True and status.mode_raw is not None:
+      notes.append(
+        f"原始模式值为 {status.mode_raw}，暂未在已知枚举中匹配到，Home Assistant 可保持 unavailable。"
+      )
+
+    if "C_ELECHEATING" in (status.raw_status or {}):
+      notes.append(
+        "C_ELECHEATING 控制路径在本次抓包中未实测，集成时建议审慎暴露电加热开关。"
+      )
 
     supported_features_preview = [
       feature for feature in [
@@ -847,7 +1005,7 @@ class SuningSmartHomeClient:
       entity_domain="climate",
       translation_key="suning_air_conditioner",
       available=status.available,
-      hvac_mode=hvac_mode,
+      hvac_mode=status.hvac_mode.value if status.hvac_mode is not None else None,
       current_temperature=status.current_temperature,
       target_temperature=status.target_temperature,
       fan_mode=status.fan_mode_raw,
@@ -1297,6 +1455,68 @@ def _build_parser() -> argparse.ArgumentParser:
 
   keep_alive = subparsers.add_parser("keep-alive")
   add_shared_arguments(keep_alive)
+
+  control = subparsers.add_parser("control")
+  add_shared_arguments(control)
+  control.add_argument("--family-id", required=True)
+  control.add_argument("--device-id", required=True)
+  control.add_argument("--power", choices=["on", "off"], required=True)
+
+  set_mode = subparsers.add_parser("set-mode")
+  add_shared_arguments(set_mode)
+  set_mode.add_argument("--family-id", required=True)
+  set_mode.add_argument("--device-id", required=True)
+  set_mode.add_argument(
+    "--mode",
+    required=True,
+    choices=["off", "cool", "heat", "fan_only", "dry", "auto"],
+  )
+
+  set_temperature = subparsers.add_parser("set-temperature")
+  add_shared_arguments(set_temperature)
+  set_temperature.add_argument("--family-id", required=True)
+  set_temperature.add_argument("--device-id", required=True)
+  set_temperature.add_argument("--temperature", type=float, required=True)
+
+  set_fan = subparsers.add_parser("set-fan")
+  add_shared_arguments(set_fan)
+  set_fan.add_argument("--family-id", required=True)
+  set_fan.add_argument("--device-id", required=True)
+  set_fan.add_argument(
+    "--speed",
+    required=True,
+    choices=["auto", "low", "mid", "high", "higher", "highest"],
+  )
+
+  set_swing = subparsers.add_parser("set-swing")
+  add_shared_arguments(set_swing)
+  set_swing.add_argument("--family-id", required=True)
+  set_swing.add_argument("--device-id", required=True)
+  set_swing.add_argument(
+    "--mode",
+    required=True,
+    choices=["off", "vertical", "horizontal", "both"],
+  )
+
+  set_preset = subparsers.add_parser("set-preset")
+  add_shared_arguments(set_preset)
+  set_preset.add_argument("--family-id", required=True)
+  set_preset.add_argument("--device-id", required=True)
+  set_preset.add_argument(
+    "--preset",
+    required=True,
+    choices=["none", "eco", "fresh_air"],
+  )
+
+  timers_cmd = subparsers.add_parser("timers")
+  add_shared_arguments(timers_cmd)
+  timers_cmd.add_argument("--family-id", required=True)
+  timers_cmd.add_argument("--device-id", required=True)
+
+  panel_cmd = subparsers.add_parser("panel")
+  add_shared_arguments(panel_cmd)
+  panel_cmd.add_argument("--family-id", required=True)
+  panel_cmd.add_argument("--device-id", required=True)
   return parser
 
 
@@ -1525,6 +1745,67 @@ def main(argv: list[str] | None = None) -> int:
       return 0
     if args.command == "keep-alive":
       _print_payload(client.keep_alive())
+      return 0
+    if args.command == "control":
+      if args.power == "off":
+        payload = client.turn_off(args.family_id, args.device_id)
+        command = "turn_off"
+      else:
+        payload = client.turn_on(args.family_id, args.device_id)
+        command = "turn_on"
+      _print_payload({"status": "ok", "command": command, "response": payload})
+      return 0
+    if args.command == "set-mode":
+      payload = client.set_hvac_mode(
+        args.family_id,
+        args.device_id,
+        HvacMode(args.mode),
+      )
+      _print_payload({"status": "ok", "command": "set_hvac_mode", "response": payload})
+      return 0
+    if args.command == "set-temperature":
+      payload = client.set_temperature(
+        args.family_id,
+        args.device_id,
+        args.temperature,
+      )
+      _print_payload(
+        {"status": "ok", "command": "set_temperature", "response": payload},
+      )
+      return 0
+    if args.command == "set-fan":
+      payload = client.set_fan_mode(
+        args.family_id,
+        args.device_id,
+        FanSpeed(args.speed),
+      )
+      _print_payload({"status": "ok", "command": "set_fan_mode", "response": payload})
+      return 0
+    if args.command == "set-swing":
+      payload = client.set_swing_mode(
+        args.family_id,
+        args.device_id,
+        SwingMode(args.mode),
+      )
+      _print_payload({"status": "ok", "command": "set_swing_mode", "response": payload})
+      return 0
+    if args.command == "set-preset":
+      payload = client.set_preset_mode(
+        args.family_id,
+        args.device_id,
+        PresetMode(args.preset),
+      )
+      _print_payload({"status": "ok", "command": "set_preset_mode", "response": payload})
+      return 0
+    if args.command == "timers":
+      timers = client.list_device_timers(args.family_id, args.device_id)
+      _print_payload([timer.model_dump(mode="json") for timer in timers])
+      return 0
+    if args.command == "panel":
+      template = client.get_device_panel_template(args.family_id, args.device_id)
+      _print_payload(
+        template.model_dump(mode="json") if template is not None else None,
+      )
       return 0
   except CaptchaRequiredError as error:
     _print_payload(

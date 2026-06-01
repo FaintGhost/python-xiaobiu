@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from enum import Enum
 from typing import Any
 from uuid import uuid4
 
@@ -96,6 +97,7 @@ class AirConditionerStatus(SuningBaseModel):
   device_record_time: str | None = None
   refresh_time: str | None = None
   power_on: bool | None = None
+  hvac_mode: HvacMode | None = None
   current_temperature: float | None = None
   target_temperature: float | None = None
   outdoor_temperature: float | None = None
@@ -131,3 +133,47 @@ class CaptchaBridgeResult(SuningBaseModel):
   token: str
   detect: str | None = None
   dfp_token: str | None = None
+
+
+class HvacMode(str, Enum):
+  COOL = "cool"
+  HEAT = "heat"
+  FAN_ONLY = "fan_only"
+  DRY = "dry"
+  AUTO = "auto"
+  OFF = "off"
+
+
+class FanSpeed(str, Enum):
+  AUTO = "auto"
+  LOW = "low"
+  MID = "mid"
+  HIGH = "high"
+  HIGHER = "higher"
+  HIGHEST = "highest"
+
+
+class SwingMode(str, Enum):
+  OFF = "off"
+  VERTICAL = "vertical"
+  HORIZONTAL = "horizontal"
+  BOTH = "both"
+
+
+class PresetMode(str, Enum):
+  NONE = "none"
+  ECO = "eco"
+  FRESH_AIR = "fresh_air"
+
+
+class PanelTemplate(SuningBaseModel):
+  device_id: str
+  model_id: str
+  components: list[str] = Field(default_factory=list)
+
+
+class Timer(SuningBaseModel):
+  name: str
+  schedule: str
+  enabled: bool
+  command: dict[str, str] = Field(default_factory=dict)

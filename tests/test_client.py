@@ -773,3 +773,179 @@ def test_normalize_air_conditioner_status_builds_ha_preview() -> None:
   debug_payload = _air_conditioner_status_payload(status, include_raw=True)
   assert "raw_device" in debug_payload
   assert "raw_status" in debug_payload
+
+
+# ---------------------------------------------------------------------------
+# Task 007 — hvac_mode inference in _normalize_air_conditioner_status
+# ---------------------------------------------------------------------------
+
+
+def _build_client() -> SuningSmartHomeClient:
+  return SuningSmartHomeClient()
+
+
+def _normalize_with_status(status: dict) -> object:
+  client = _build_client()
+  device = {
+    "id": "000165f9b029afa2e5d8",
+    "name": "客厅空调",
+    "modelId": "0001000200150000",
+    "fId": "37790",
+    "categoryId": "0002",
+    "online": "1",
+    "status": {"onlineStatus": "1", **status},
+  }
+  return client._normalize_air_conditioner_status(device)
+
+
+def test_normalize_hvac_mode_off_when_power_zero() -> None:
+  status = _normalize_with_status({"C_POWER": "0"})
+  assert status.hvac_mode == "off"
+
+
+def test_normalize_hvac_mode_cool_heat_dry_fan_auto() -> None:
+  cases = {
+    "1": "cool",
+    "2": "heat",
+    "3": "fan_only",
+    "4": "dry",
+    "6": "auto",
+  }
+  for raw, expected in cases.items():
+    status = _normalize_with_status({"C_POWER": "1", "C_MODE": raw})
+    assert status.hvac_mode == expected, f"C_MODE={raw}"
+
+
+def test_normalize_hvac_mode_uses_sn_prefix_fallback() -> None:
+  status = _normalize_with_status({"SN_POWER": "1", "SN_MODE": "1"})
+  assert status.hvac_mode == "cool"
+
+
+def test_normalize_hvac_mode_none_when_no_fields() -> None:
+  assert _normalize_with_status({}).hvac_mode is None
+
+
+def test_normalize_hvac_mode_none_when_power_on_but_mode_missing() -> None:
+  assert _normalize_with_status({"C_POWER": "1"}).hvac_mode is None
+
+
+def test_normalize_hvac_mode_unknown_mode_value_keeps_none() -> None:
+  # HAR did not surface C_MODE=5, so we must not guess.
+  assert _normalize_with_status({"C_POWER": "1", "C_MODE": "5"}).hvac_mode is None
+
+
+def test_normalize_ha_climate_preview_notes_drop_placeholder() -> None:
+  status = _normalize_with_status(
+    {"C_POWER": "1", "C_MODE": "1", "C_ELECHEATING": "0"},
+  )
+  joined = " ".join(status.ha_climate_preview.notes or [])
+  assert "模式枚举尚未确认" not in joined
+  assert "C_ELECHEATING" in joined
+
+
+# ---------------------------------------------------------------------------
+# Task 008 — new CLI subcommands
+# ---------------------------------------------------------------------------
+
+
+def test_cli_control_parses() -> None:
+  args = _build_parser().parse_args(
+    ["control", "--family-id", "37790", "--device-id", "D1", "--power", "off"],
+  )
+  assert args.command == "control"
+  assert args.family_id == "37790"
+  assert args.device_id == "D1"
+  assert args.power == "off"
+
+
+def test_cli_set_mode_parses() -> None:
+  args = _build_parser().parse_args(
+    ["set-mode", "--family-id", "37790", "--device-id", "D1", "--mode", "cool"],
+  )
+  assert args.command == "set-mode"
+  assert args.mode == "cool"
+
+
+def test_cli_set_temperature_parses() -> None:
+  args = _build_parser().parse_args(
+    [
+      "set-temperature",
+      "--family-id",
+      "37790",
+      "--device-id",
+      "D1",
+      "--temperature",
+      "24.0",
+    ],
+  )
+  assert args.command == "set-temperature"
+  assert args.temperature == 24.0
+
+
+def test_cli_set_fan_parses() -> None:
+  args = _build_parser().parse_args(
+    ["set-fan", "--family-id", "37790", "--device-id", "D1", "--speed", "low"],
+  )
+  assert args.command == "set-fan"
+  assert args.speed == "low"
+
+
+def test_cli_set_swing_parses() -> None:
+  args = _build_parser().parse_args(
+    ["set-swing", "--family-id", "37790", "--device-id", "D1", "--mode", "vertical"],
+  )
+  assert args.command == "set-swing"
+  assert args.mode == "vertical"
+
+
+def test_cli_set_preset_parses() -> None:
+  args = _build_parser().parse_args(
+    ["set-preset", "--family-id", "37790", "--device-id", "D1", "--preset", "eco"],
+  )
+  assert args.command == "set-preset"
+  assert args.preset == "eco"
+
+
+def test_cli_timers_parses() -> None:
+  args = _build_parser().parse_args(
+    ["timers", "--family-id", "37790", "--device-id", "D1"],
+  )
+  assert args.command == "timers"
+  assert args.device_id == "D1"
+
+
+def test_cli_panel_parses() -> None:
+  args = _build_parser().parse_args(
+    ["panel", "--family-id", "37790", "--device-id", "D1"],
+  )
+  assert args.command == "panel"
+  assert args.device_id == "D1"
+
+
+def test_cli_set_mode_rejects_invalid_value() -> None:
+  with pytest.raises(SystemExit):
+    _build_parser().parse_args(
+      [
+        "set-mode",
+        "--family-id",
+        "37790",
+        "--device-id",
+        "D1",
+        "--mode",
+        "turbo",
+      ],
+    )
+
+
+def test_cli_control_requires_power() -> None:
+  with pytest.raises(SystemExit):
+    _build_parser().parse_args(
+      ["control", "--family-id", "37790", "--device-id", "D1"],
+    )
+
+
+def test_cli_set_temperature_requires_value() -> None:
+  with pytest.raises(SystemExit):
+    _build_parser().parse_args(
+      ["set-temperature", "--family-id", "37790", "--device-id", "D1"],
+    )
