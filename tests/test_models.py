@@ -42,13 +42,13 @@ def test_hvac_mode_rejects_unknown() -> None:
 
 
 def test_fan_speed_accepts_all_members() -> None:
-  for value in ("auto", "low", "mid", "high", "higher", "highest"):
+  for value in ("auto", "silent", "low", "medium", "high", "turbo"):
     assert _FanHolder(speed=value).speed == value
 
 
 def test_fan_speed_rejects_unknown() -> None:
   with pytest.raises(ValidationError):
-    _FanHolder(speed="medium")
+    _FanHolder(speed="breeze")
 
 
 def test_swing_mode_accepts_all_members() -> None:
@@ -62,7 +62,7 @@ def test_swing_mode_rejects_unknown() -> None:
 
 
 def test_preset_mode_accepts_all_members() -> None:
-  for value in ("none", "eco", "fresh_air"):
+  for value in ("none", "eco", "fresh_air", "aux_heat"):
     assert _PresetHolder(preset=value).preset == value
 
 

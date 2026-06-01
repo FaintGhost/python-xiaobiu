@@ -43,16 +43,17 @@ C_FIELD_TO_HVAC: dict[str, HvacMode] = {
   "2": HvacMode.HEAT,
   "3": HvacMode.FAN_ONLY,
   "4": HvacMode.DRY,
+  "5": HvacMode.QUICK,
   "6": HvacMode.AUTO,
 }
 
 C_FIELD_TO_FAN: dict[str, FanSpeed] = {
   "0": FanSpeed.AUTO,
-  "1": FanSpeed.LOW,
-  "2": FanSpeed.MID,
-  "3": FanSpeed.HIGH,
-  "4": FanSpeed.HIGHER,
-  "5": FanSpeed.HIGHEST,
+  "1": FanSpeed.SILENT,
+  "2": FanSpeed.LOW,
+  "3": FanSpeed.MEDIUM,
+  "4": FanSpeed.HIGH,
+  "5": FanSpeed.TURBO,
 }
 
 HVAC_TO_C_FIELD: dict[HvacMode, str] = {mode: raw for raw, mode in C_FIELD_TO_HVAC.items()}
@@ -351,22 +352,103 @@ def set_preset_mode(
   model_id: str,
   preset: PresetMode,
 ) -> dict[str, Any]:
+  """Toggle a single preset on.  Use the dedicated setters to turn presets off."""
+
   if preset is PresetMode.NONE:
-    return app_oper(client, device_id, model_id, _PRESET_NONE_OFF)
+    raise SuningError(
+      "PresetMode.NONE 不再代表'关所有预设'，请改用 set_eco / set_fresh_air / set_aux_heat"
+    )
   if preset in PRESET_ON_CMD:
     return app_oper(client, device_id, model_id, PRESET_ON_CMD[preset])
   raise SuningError(f"unsupported preset mode: {preset!r}")
 
 
-def set_electric_heating(
+# ---------------------------------------------------------------------------
+# Independent boolean setters (preferred for HA climate integration)
+# ---------------------------------------------------------------------------
+
+
+def set_vertical_swing(
   client: Any,
   device_id: str,
   model_id: str,
   *,
   on: bool,
 ) -> dict[str, Any]:
-  # C_ELECHEATING was surfaced by queryTemplate but the control path
-  # was not exercised in the 2026-06-01 HAR; treat with care.
+  return app_oper(
+    client,
+    device_id,
+    model_id,
+    {"C_AIRVERTICAL": "1" if on else "0"},
+  )
+
+
+def set_horizontal_swing(
+  client: Any,
+  device_id: str,
+  model_id: str,
+  *,
+  on: bool,
+) -> dict[str, Any]:
+  return app_oper(
+    client,
+    device_id,
+    model_id,
+    {"C_AIRHORIZONTAL": "1" if on else "0"},
+  )
+
+
+def set_eco(
+  client: Any,
+  device_id: str,
+  model_id: str,
+  *,
+  on: bool,
+) -> dict[str, Any]:
+  return app_oper(client, device_id, model_id, {"C_ECO": "1" if on else "0"})
+
+
+def set_fresh_air(
+  client: Any,
+  device_id: str,
+  model_id: str,
+  *,
+  on: bool,
+) -> dict[str, Any]:
+  return app_oper(
+    client,
+    device_id,
+    model_id,
+    {"C_FRESHAIR": "1" if on else "0"},
+  )
+
+
+def set_aux_heat(
+  client: Any,
+  device_id: str,
+  model_id: str,
+  *,
+  on: bool,
+  current_hvac_mode: HvacMode | str | None = None,
+) -> dict[str, Any]:
+  """Toggle electric auxiliary heating.
+
+  The user-facing rule is "aux heat only when in HEAT mode".  Pass
+  ``current_hvac_mode`` to enforce; if it is not ``HEAT`` (or the string
+  ``"heat"``) and ``on`` is True, raise :class:`SuningError` so we never
+  ship a request the device is known to reject.  When
+  ``current_hvac_mode`` is ``None`` (couldn't read state) we let the
+  call through and trust the device to no-op.
+  """
+
+  if on and current_hvac_mode is not None:
+    normalised = (
+      current_hvac_mode.value
+      if isinstance(current_hvac_mode, HvacMode)
+      else str(current_hvac_mode)
+    )
+    if normalised != HvacMode.HEAT.value:
+      raise SuningError("电辅热仅在制热模式下生效")
   return app_oper(
     client,
     device_id,
@@ -397,12 +479,16 @@ __all__ = [
   "infer_hvac_mode",
   "list_device_timers",
   "parse_panel_components",
-  "set_electric_heating",
+  "set_aux_heat",
+  "set_eco",
   "set_fan_mode",
+  "set_fresh_air",
+  "set_horizontal_swing",
   "set_hvac_mode",
   "set_preset_mode",
   "set_swing_mode",
   "set_temperature",
+  "set_vertical_swing",
   "turn_off",
   "turn_on",
 ]

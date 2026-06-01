@@ -54,10 +54,16 @@ try:  # pragma: no cover
   from xiaobiu.ac_control import set_fan_mode  # type: ignore
   from xiaobiu.ac_control import set_swing_mode  # type: ignore
   from xiaobiu.ac_control import set_preset_mode  # type: ignore
-  from xiaobiu.ac_control import set_electric_heating  # type: ignore
+  from xiaobiu.ac_control import set_eco  # type: ignore
+  from xiaobiu.ac_control import set_fresh_air  # type: ignore
+  from xiaobiu.ac_control import set_aux_heat  # type: ignore
+  from xiaobiu.ac_control import set_vertical_swing  # type: ignore
+  from xiaobiu.ac_control import set_horizontal_swing  # type: ignore
 except ImportError:  # pragma: no cover
   turn_on = turn_off = set_hvac_mode = set_temperature = None  # type: ignore[assignment]
-  set_fan_mode = set_swing_mode = set_preset_mode = set_electric_heating = None  # type: ignore[assignment]
+  set_fan_mode = set_swing_mode = set_preset_mode = None  # type: ignore[assignment]
+  set_eco = set_fresh_air = set_aux_heat = None  # type: ignore[assignment]
+  set_vertical_swing = set_horizontal_swing = None  # type: ignore[assignment]
 
 
 def test_c_field_to_hvac_maps_all_modes() -> None:
@@ -65,18 +71,18 @@ def test_c_field_to_hvac_maps_all_modes() -> None:
   assert C_FIELD_TO_HVAC["2"] is HvacMode.HEAT
   assert C_FIELD_TO_HVAC["3"] is HvacMode.FAN_ONLY
   assert C_FIELD_TO_HVAC["4"] is HvacMode.DRY
+  assert C_FIELD_TO_HVAC["5"] is HvacMode.QUICK
   assert C_FIELD_TO_HVAC["6"] is HvacMode.AUTO
-  assert len(C_FIELD_TO_HVAC) == 5
-  assert "5" not in C_FIELD_TO_HVAC
+  assert len(C_FIELD_TO_HVAC) == 6
 
 
 def test_c_field_to_fan_maps_all_speeds() -> None:
   assert C_FIELD_TO_FAN["0"] is FanSpeed.AUTO
-  assert C_FIELD_TO_FAN["1"] is FanSpeed.LOW
-  assert C_FIELD_TO_FAN["2"] is FanSpeed.MID
-  assert C_FIELD_TO_FAN["3"] is FanSpeed.HIGH
-  assert C_FIELD_TO_FAN["4"] is FanSpeed.HIGHER
-  assert C_FIELD_TO_FAN["5"] is FanSpeed.HIGHEST
+  assert C_FIELD_TO_FAN["1"] is FanSpeed.SILENT
+  assert C_FIELD_TO_FAN["2"] is FanSpeed.LOW
+  assert C_FIELD_TO_FAN["3"] is FanSpeed.MEDIUM
+  assert C_FIELD_TO_FAN["4"] is FanSpeed.HIGH
+  assert C_FIELD_TO_FAN["5"] is FanSpeed.TURBO
   assert len(C_FIELD_TO_FAN) == 6
 
 
@@ -443,11 +449,11 @@ def test_set_temperature_accepts_boundaries(good) -> None:
   "speed,expected",
   [
     (FanSpeed.AUTO, {"C_FANSPEED": "0"}),
-    (FanSpeed.LOW, {"C_FANSPEED": "1"}),
-    (FanSpeed.MID, {"C_FANSPEED": "2"}),
-    (FanSpeed.HIGH, {"C_FANSPEED": "3"}),
-    (FanSpeed.HIGHER, {"C_FANSPEED": "4"}),
-    (FanSpeed.HIGHEST, {"C_FANSPEED": "5"}),
+    (FanSpeed.SILENT, {"C_FANSPEED": "1"}),
+    (FanSpeed.LOW, {"C_FANSPEED": "2"}),
+    (FanSpeed.MEDIUM, {"C_FANSPEED": "3"}),
+    (FanSpeed.HIGH, {"C_FANSPEED": "4"}),
+    (FanSpeed.TURBO, {"C_FANSPEED": "5"}),
   ],
 )
 def test_set_fan_mode_sends_c_fanspeed(speed, expected) -> None:
@@ -483,15 +489,80 @@ def test_set_preset_mode_fresh_air_sends_c_freshair_on() -> None:
   assert _capture_cmd(set_preset_mode, PresetMode.FRESH_AIR) == {"C_FRESHAIR": "1"}
 
 
-def test_set_preset_mode_none_turns_all_off() -> None:
+def test_set_preset_mode_none_now_raises() -> None:
   pytest.importorskip("xiaobiu.ac_control", reason="high-level helpers not implemented")
   assert set_preset_mode is not None
-  cmd = _capture_cmd(set_preset_mode, PresetMode.NONE)
-  assert cmd == {"C_ECO": "0", "C_FRESHAIR": "0", "C_ELECHEATING": "0"}
+  with pytest.raises(SuningError, match="NONE"):
+    set_preset_mode(MagicMock(), "dev", "mod", PresetMode.NONE)
+
+
+def test_set_eco_sends_field() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="set_eco not implemented")
+  assert set_eco is not None
+  assert _capture_cmd(set_eco, on=True) == {"C_ECO": "1"}
+  assert _capture_cmd(set_eco, on=False) == {"C_ECO": "0"}
+
+
+def test_set_fresh_air_sends_field() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="set_fresh_air not implemented")
+  assert set_fresh_air is not None
+  assert _capture_cmd(set_fresh_air, on=True) == {"C_FRESHAIR": "1"}
+  assert _capture_cmd(set_fresh_air, on=False) == {"C_FRESHAIR": "0"}
+
+
+def test_set_aux_heat_off_always_passes_through() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="set_aux_heat not implemented")
+  assert set_aux_heat is not None
+  assert _capture_cmd(set_aux_heat, on=False, current_hvac_mode=HvacMode.COOL) == {
+    "C_ELECHEATING": "0"
+  }
+  assert _capture_cmd(set_aux_heat, on=False, current_hvac_mode=None) == {
+    "C_ELECHEATING": "0"
+  }
+
+
+def test_set_aux_heat_on_requires_heat_mode() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="set_aux_heat not implemented")
+  assert set_aux_heat is not None
+  assert _capture_cmd(set_aux_heat, on=True, current_hvac_mode=HvacMode.HEAT) == {
+    "C_ELECHEATING": "1"
+  }
+  for mode in (HvacMode.COOL, HvacMode.DRY, HvacMode.FAN_ONLY, HvacMode.AUTO, HvacMode.OFF):
+    with pytest.raises(SuningError, match="制热"):
+      set_aux_heat(MagicMock(), "dev", "mod", on=True, current_hvac_mode=mode)
+
+
+def test_set_aux_heat_on_with_unknown_mode_is_allowed() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="set_aux_heat not implemented")
+  assert set_aux_heat is not None
+  # Status read failure (None) should not block — trust the device.
+  assert _capture_cmd(set_aux_heat, on=True, current_hvac_mode=None) == {
+    "C_ELECHEATING": "1"
+  }
+
+
+def test_set_vertical_swing_sends_field() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="set_vertical_swing not implemented")
+  assert set_vertical_swing is not None
+  assert _capture_cmd(set_vertical_swing, on=True) == {"C_AIRVERTICAL": "1"}
+  assert _capture_cmd(set_vertical_swing, on=False) == {"C_AIRVERTICAL": "0"}
+
+
+def test_set_horizontal_swing_sends_field() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="set_horizontal_swing not implemented")
+  assert set_horizontal_swing is not None
+  assert _capture_cmd(set_horizontal_swing, on=True) == {"C_AIRHORIZONTAL": "1"}
+  assert _capture_cmd(set_horizontal_swing, on=False) == {"C_AIRHORIZONTAL": "0"}
+
+
+def test_set_hvac_mode_quick_sends_c_mode_5() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="set_hvac_mode not implemented")
+  assert set_hvac_mode is not None
+  assert _capture_cmd(set_hvac_mode, HvacMode.QUICK) == {"C_MODE": "5"}
 
 
 def test_set_electric_heating_sends_field() -> None:
   pytest.importorskip("xiaobiu.ac_control", reason="high-level helpers not implemented")
-  assert set_electric_heating is not None
-  assert _capture_cmd(set_electric_heating, on=True) == {"C_ELECHEATING": "1"}
-  assert _capture_cmd(set_electric_heating, on=False) == {"C_ELECHEATING": "0"}
+  assert set_aux_heat is not None
+  assert _capture_cmd(set_aux_heat, on=True) == {"C_ELECHEATING": "1"}
+  assert _capture_cmd(set_aux_heat, on=False) == {"C_ELECHEATING": "0"}

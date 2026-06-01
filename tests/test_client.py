@@ -830,8 +830,12 @@ def test_normalize_hvac_mode_none_when_power_on_but_mode_missing() -> None:
 
 
 def test_normalize_hvac_mode_unknown_mode_value_keeps_none() -> None:
-  # HAR did not surface C_MODE=5, so we must not guess.
-  assert _normalize_with_status({"C_POWER": "1", "C_MODE": "5"}).hvac_mode is None
+  # C_MODE=7 is unassigned; do not guess.
+  assert _normalize_with_status({"C_POWER": "1", "C_MODE": "7"}).hvac_mode is None
+
+
+def test_normalize_hvac_mode_quick() -> None:
+  assert _normalize_with_status({"C_POWER": "1", "C_MODE": "5"}).hvac_mode == "quick"
 
 
 def test_normalize_ha_climate_preview_notes_drop_placeholder() -> None:
@@ -898,12 +902,71 @@ def test_cli_set_swing_parses() -> None:
   assert args.mode == "vertical"
 
 
-def test_cli_set_preset_parses() -> None:
+def test_cli_set_preset_removed() -> None:
+  with pytest.raises(SystemExit):
+    _build_parser().parse_args(
+      ["set-preset", "--family-id", "37790", "--device-id", "D1", "--preset", "eco"],
+    )
+
+
+def test_cli_set_eco_parses_on_off() -> None:
   args = _build_parser().parse_args(
-    ["set-preset", "--family-id", "37790", "--device-id", "D1", "--preset", "eco"],
+    ["set-eco", "--family-id", "37790", "--device-id", "D1", "--on"],
   )
-  assert args.command == "set-preset"
-  assert args.preset == "eco"
+  assert args.command == "set-eco"
+  assert args.on is True
+  args = _build_parser().parse_args(
+    ["set-eco", "--family-id", "37790", "--device-id", "D1", "--off"],
+  )
+  assert args.on is False
+
+
+def test_cli_set_fresh_air_parses_on_off() -> None:
+  args = _build_parser().parse_args(
+    ["set-fresh-air", "--family-id", "37790", "--device-id", "D1", "--off"],
+  )
+  assert args.command == "set-fresh-air"
+  assert args.on is False
+
+
+def test_cli_set_aux_heat_parses_on_off() -> None:
+  args = _build_parser().parse_args(
+    ["set-aux-heat", "--family-id", "37790", "--device-id", "D1", "--on"],
+  )
+  assert args.command == "set-aux-heat"
+  assert args.on is True
+
+
+def test_cli_set_vertical_swing_parses_on_off() -> None:
+  args = _build_parser().parse_args(
+    ["set-vertical-swing", "--family-id", "37790", "--device-id", "D1", "--on"],
+  )
+  assert args.command == "set-vertical-swing"
+  assert args.on is True
+
+
+def test_cli_set_horizontal_swing_parses_on_off() -> None:
+  args = _build_parser().parse_args(
+    ["set-horizontal-swing", "--family-id", "37790", "--device-id", "D1", "--off"],
+  )
+  assert args.command == "set-horizontal-swing"
+  assert args.on is False
+
+
+def test_cli_set_fan_speed_choices_match_renamed_fan_speed() -> None:
+  for speed in ("auto", "silent", "low", "medium", "high", "turbo"):
+    args = _build_parser().parse_args(
+      ["set-fan", "--family-id", "37790", "--device-id", "D1", "--speed", speed],
+    )
+    assert args.speed == speed
+
+
+def test_cli_set_mode_includes_quick() -> None:
+  args = _build_parser().parse_args(
+    ["set-mode", "--family-id", "37790", "--device-id", "D1", "--mode", "quick"],
+  )
+  assert args.command == "set-mode"
+  assert args.mode == "quick"
 
 
 def test_cli_timers_parses() -> None:

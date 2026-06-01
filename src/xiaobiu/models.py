@@ -136,21 +136,23 @@ class CaptchaBridgeResult(SuningBaseModel):
 
 
 class HvacMode(str, Enum):
-  COOL = "cool"
-  HEAT = "heat"
-  FAN_ONLY = "fan_only"
-  DRY = "dry"
-  AUTO = "auto"
   OFF = "off"
+  HEAT = "heat"
+  COOL = "cool"
+  HEAT_COOL = "heat_cool"
+  AUTO = "auto"
+  DRY = "dry"
+  FAN_ONLY = "fan_only"
+  QUICK = "quick"
 
 
 class FanSpeed(str, Enum):
   AUTO = "auto"
+  SILENT = "silent"
   LOW = "low"
-  MID = "mid"
+  MEDIUM = "medium"
   HIGH = "high"
-  HIGHER = "higher"
-  HIGHEST = "highest"
+  TURBO = "turbo"
 
 
 class SwingMode(str, Enum):
@@ -164,6 +166,7 @@ class PresetMode(str, Enum):
   NONE = "none"
   ECO = "eco"
   FRESH_AIR = "fresh_air"
+  AUX_HEAT = "aux_heat"
 
 
 class PanelTemplate(SuningBaseModel):

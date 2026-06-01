@@ -860,10 +860,93 @@ class SuningSmartHomeClient:
     *,
     on: bool,
   ) -> dict[str, Any]:
+    """Deprecated alias for :meth:`set_aux_heat`."""
+
+    return self.set_aux_heat(family_id, device_id, on=on)
+
+  def set_eco(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    *,
+    on: bool,
+  ) -> dict[str, Any]:
     from . import ac_control
 
     target_device, model_id = self._resolve_ac_target(family_id, device_id)
-    return ac_control.set_electric_heating(self, target_device, model_id, on=on)
+    return ac_control.set_eco(self, target_device, model_id, on=on)
+
+  def set_fresh_air(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    *,
+    on: bool,
+  ) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.set_fresh_air(self, target_device, model_id, on=on)
+
+  def set_aux_heat(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    *,
+    on: bool,
+  ) -> dict[str, Any]:
+    """Toggle electric auxiliary heating.
+
+    Raises :class:`SuningError` when ``on`` is True and the device's
+    current ``hvac_mode`` is anything other than ``HEAT`` — the rule
+    surfaced by the App is "aux heat only while heating".  When the
+    status read fails (``hvac_mode`` is ``None``) we let the call
+    through and trust the device to no-op.
+    """
+
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    current_mode: HvacMode | None = None
+    if on:
+      try:
+        current_mode = self.get_air_conditioner_status(
+          family_id,
+          device_id=target_device,
+        ).hvac_mode
+      except SuningError:
+        current_mode = None
+    return ac_control.set_aux_heat(
+      self,
+      target_device,
+      model_id,
+      on=on,
+      current_hvac_mode=current_mode,
+    )
+
+  def set_vertical_swing(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    *,
+    on: bool,
+  ) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.set_vertical_swing(self, target_device, model_id, on=on)
+
+  def set_horizontal_swing(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    *,
+    on: bool,
+  ) -> dict[str, Any]:
+    from . import ac_control
+
+    target_device, model_id = self._resolve_ac_target(family_id, device_id)
+    return ac_control.set_horizontal_swing(self, target_device, model_id, on=on)
 
   def list_device_timers(
     self,
@@ -1471,7 +1554,7 @@ def _build_parser() -> argparse.ArgumentParser:
   set_mode.add_argument(
     "--mode",
     required=True,
-    choices=["off", "cool", "heat", "fan_only", "dry", "auto"],
+    choices=["off", "cool", "heat", "fan_only", "dry", "auto", "quick"],
   )
 
   set_temperature = subparsers.add_parser("set-temperature")
@@ -1487,7 +1570,7 @@ def _build_parser() -> argparse.ArgumentParser:
   set_fan.add_argument(
     "--speed",
     required=True,
-    choices=["auto", "low", "mid", "high", "higher", "highest"],
+    choices=["auto", "silent", "low", "medium", "high", "turbo"],
   )
 
   set_swing = subparsers.add_parser("set-swing")
@@ -1500,15 +1583,50 @@ def _build_parser() -> argparse.ArgumentParser:
     choices=["off", "vertical", "horizontal", "both"],
   )
 
-  set_preset = subparsers.add_parser("set-preset")
-  add_shared_arguments(set_preset)
-  set_preset.add_argument("--family-id", required=True)
-  set_preset.add_argument("--device-id", required=True)
-  set_preset.add_argument(
-    "--preset",
-    required=True,
-    choices=["none", "eco", "fresh_air"],
+  set_vertical_swing = subparsers.add_parser("set-vertical-swing")
+  add_shared_arguments(set_vertical_swing)
+  set_vertical_swing.add_argument("--family-id", required=True)
+  set_vertical_swing.add_argument("--device-id", required=True)
+  set_vertical_swing.add_argument(
+    "--on",
+    dest="on",
+    action="store_true",
+    default=None,
   )
+  set_vertical_swing.add_argument("--off", dest="on", action="store_false")
+  set_vertical_swing.set_defaults(on=True)
+
+  set_horizontal_swing = subparsers.add_parser("set-horizontal-swing")
+  add_shared_arguments(set_horizontal_swing)
+  set_horizontal_swing.add_argument("--family-id", required=True)
+  set_horizontal_swing.add_argument("--device-id", required=True)
+  set_horizontal_swing.add_argument("--on", dest="on", action="store_true", default=None)
+  set_horizontal_swing.add_argument("--off", dest="on", action="store_false")
+  set_horizontal_swing.set_defaults(on=True)
+
+  set_eco_cmd = subparsers.add_parser("set-eco")
+  add_shared_arguments(set_eco_cmd)
+  set_eco_cmd.add_argument("--family-id", required=True)
+  set_eco_cmd.add_argument("--device-id", required=True)
+  set_eco_cmd.add_argument("--on", dest="on", action="store_true", default=None)
+  set_eco_cmd.add_argument("--off", dest="on", action="store_false")
+  set_eco_cmd.set_defaults(on=True)
+
+  set_fresh_air_cmd = subparsers.add_parser("set-fresh-air")
+  add_shared_arguments(set_fresh_air_cmd)
+  set_fresh_air_cmd.add_argument("--family-id", required=True)
+  set_fresh_air_cmd.add_argument("--device-id", required=True)
+  set_fresh_air_cmd.add_argument("--on", dest="on", action="store_true", default=None)
+  set_fresh_air_cmd.add_argument("--off", dest="on", action="store_false")
+  set_fresh_air_cmd.set_defaults(on=True)
+
+  set_aux_heat_cmd = subparsers.add_parser("set-aux-heat")
+  add_shared_arguments(set_aux_heat_cmd)
+  set_aux_heat_cmd.add_argument("--family-id", required=True)
+  set_aux_heat_cmd.add_argument("--device-id", required=True)
+  set_aux_heat_cmd.add_argument("--on", dest="on", action="store_true", default=None)
+  set_aux_heat_cmd.add_argument("--off", dest="on", action="store_false")
+  set_aux_heat_cmd.set_defaults(on=True)
 
   timers_cmd = subparsers.add_parser("timers")
   add_shared_arguments(timers_cmd)
@@ -1791,13 +1909,45 @@ def main(argv: list[str] | None = None) -> int:
       )
       _print_payload({"status": "ok", "command": "set_swing_mode", "response": payload})
       return 0
-    if args.command == "set-preset":
-      payload = client.set_preset_mode(
+    if args.command == "set-vertical-swing":
+      payload = client.set_vertical_swing(
         args.family_id,
         args.device_id,
-        PresetMode(args.preset),
+        on=bool(args.on),
       )
-      _print_payload({"status": "ok", "command": "set_preset_mode", "response": payload})
+      _print_payload(
+        {"status": "ok", "command": "set_vertical_swing", "response": payload},
+      )
+      return 0
+    if args.command == "set-horizontal-swing":
+      payload = client.set_horizontal_swing(
+        args.family_id,
+        args.device_id,
+        on=bool(args.on),
+      )
+      _print_payload(
+        {"status": "ok", "command": "set_horizontal_swing", "response": payload},
+      )
+      return 0
+    if args.command == "set-eco":
+      payload = client.set_eco(args.family_id, args.device_id, on=bool(args.on))
+      _print_payload({"status": "ok", "command": "set_eco", "response": payload})
+      return 0
+    if args.command == "set-fresh-air":
+      payload = client.set_fresh_air(
+        args.family_id,
+        args.device_id,
+        on=bool(args.on),
+      )
+      _print_payload({"status": "ok", "command": "set_fresh_air", "response": payload})
+      return 0
+    if args.command == "set-aux-heat":
+      payload = client.set_aux_heat(
+        args.family_id,
+        args.device_id,
+        on=bool(args.on),
+      )
+      _print_payload({"status": "ok", "command": "set_aux_heat", "response": payload})
       return 0
     if args.command == "timers":
       timers = client.list_device_timers(args.family_id, args.device_id)
