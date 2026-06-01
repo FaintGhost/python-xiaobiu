@@ -949,3 +949,22 @@ def test_cli_set_temperature_requires_value() -> None:
     _build_parser().parse_args(
       ["set-temperature", "--family-id", "37790", "--device-id", "D1"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Task 023 — _resolve_ac_target reads real field name
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_ac_target_reads_model_field_from_list_devices(monkeypatch) -> None:
+  client = SuningSmartHomeClient()
+  device = {
+    "id": "000165f9b029afa2e5d8",
+    "name": "惠而浦空调",
+    "model": "0001000200150000",  # list_devices uses "model", not "modelId"
+    "fId": "37790",
+  }
+  monkeypatch.setattr(client, "get_device", lambda *_, **__: device)
+  resolved_id, resolved_model = client._resolve_ac_target("37790", "000165f9b029afa2e5d8")
+  assert resolved_id == "000165f9b029afa2e5d8"
+  assert resolved_model == "0001000200150000"

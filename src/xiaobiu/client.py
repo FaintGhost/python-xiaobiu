@@ -767,7 +767,9 @@ class SuningSmartHomeClient:
 
     device = self.get_device(family_id, device_id=str(device_id) if device_id else None)
     actual_id = str(device.get("id") or "")
-    model_id = str(device.get("modelId") or "")
+    # list_devices returns ``model`` (not ``modelId``) for AC units;
+    # fall back to ``modelId`` for any caller that pre-normalises.
+    model_id = str(device.get("model") or device.get("modelId") or "")
     if not actual_id or not model_id:
       raise SuningError("设备信息缺少 id 或 modelId，无法下发控制命令。")
     return actual_id, model_id
