@@ -561,7 +561,7 @@ def test_set_hvac_mode_quick_sends_c_mode_5() -> None:
   assert _capture_cmd(set_hvac_mode, HvacMode.QUICK) == {"C_MODE": "5"}
 
 
-def test_set_electric_heating_sends_field() -> None:
+def test_set_aux_heat_sends_field_directly() -> None:
   pytest.importorskip("xiaobiu.ac_control", reason="high-level helpers not implemented")
   assert set_aux_heat is not None
   assert _capture_cmd(set_aux_heat, on=True) == {"C_ELECHEATING": "1"}

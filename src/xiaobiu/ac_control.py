@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-from .client import SuningError
+from .exceptions import SuningError
 from .models import (
   FanSpeed,
   HvacMode,
