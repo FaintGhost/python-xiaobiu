@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import MagicMock
 from urllib.parse import unquote_plus
 
 import pytest
 
-from xiaobiu import SuningSmartHomeClient, parse_jsonp_or_json
+from xiaobiu import HvacMode, SuningSmartHomeClient, parse_jsonp_or_json
 from xiaobiu.client import (
   AuthenticationError,
   CaptchaRequiredError,
@@ -640,3 +641,140 @@ def test_resolve_ac_target_reads_model_field_from_list_devices(monkeypatch) -> N
   resolved_id, resolved_model = client._resolve_ac_target("37790", "000165f9b029afa2e5d8")
   assert resolved_id == "000165f9b029afa2e5d8"
   assert resolved_model == "0001000200150000"
+
+
+# ---------------------------------------------------------------------------
+# ac_status helper unit tests
+# ---------------------------------------------------------------------------
+
+
+def test_coalesce_skips_none_and_empty_strings() -> None:
+  from xiaobiu.ac_status import _coalesce
+
+  assert _coalesce(None, "", "  ", "x", "y") == "x"
+  assert _coalesce(None, "") is None
+
+
+def test_parse_bool_flag_handles_truthy_and_falsy() -> None:
+  from xiaobiu.ac_status import _parse_bool_flag
+
+  assert _parse_bool_flag("1") is True
+  assert _parse_bool_flag("true") is True
+  assert _parse_bool_flag("YES") is True
+  assert _parse_bool_flag("0") is False
+  assert _parse_bool_flag("false") is False
+  assert _parse_bool_flag("off") is False
+  assert _parse_bool_flag("maybe") is None
+  assert _parse_bool_flag("") is None
+
+
+def test_parse_float_value_handles_invalid_input() -> None:
+  from xiaobiu.ac_status import _parse_float_value
+
+  assert _parse_float_value("25.5") == 25.5
+  assert _parse_float_value("  0  ") == 0.0
+  assert _parse_float_value("not a number") is None
+  assert _parse_float_value("") is None
+  assert _parse_float_value(None) is None
+
+
+def test_strip_html_text_decodes_and_strips_tags() -> None:
+  from xiaobiu.ac_status import _strip_html_text
+
+  assert _strip_html_text("<b>hello</b>") == "hello"
+  assert _strip_html_text(None) is None
+  assert _strip_html_text("<font color='#999999'>已离线</font>") == "已离线"
+  assert _strip_html_text("&amp;") == "&"
+
+
+def test_infer_swing_mode_returns_expected_enum() -> None:
+  from xiaobiu.ac_status import _infer_swing_mode
+
+  assert _infer_swing_mode(True, True) == "both"
+  assert _infer_swing_mode(True, False) == "horizontal"
+  assert _infer_swing_mode(False, True) == "vertical"
+  assert _infer_swing_mode(False, False) == "off"
+  assert _infer_swing_mode(None, None) is None
+
+
+def test_infer_hvac_mode_resolves_known_values() -> None:
+  from xiaobiu.ac_status import infer_hvac_mode
+
+  assert infer_hvac_mode(power_on=True, mode_raw="1") == HvacMode.COOL
+  assert infer_hvac_mode(power_on=True, mode_raw="2") == HvacMode.HEAT
+  assert infer_hvac_mode(power_on=True, mode_raw="5") == HvacMode.QUICK
+  assert infer_hvac_mode(power_on=True, mode_raw="bogus") is None
+  assert infer_hvac_mode(power_on=False, mode_raw="1") == HvacMode.OFF
+  assert infer_hvac_mode(power_on=None, mode_raw="1") is None
+
+
+def test_is_air_conditioner_device_matches_category_or_name() -> None:
+  from xiaobiu.ac_status import _is_air_conditioner_device
+
+  assert _is_air_conditioner_device({"categoryId": "0002", "name": "Anything"}) is True
+  assert _is_air_conditioner_device({"categoryId": "0001", "name": "客厅空调"}) is True
+  assert _is_air_conditioner_device({"categoryId": "0001", "name": "客厅灯"}) is False
+
+
+def test_list_family_infos_raises_on_missing_families_key() -> None:
+  from xiaobiu.ac_status import list_family_infos
+  from xiaobiu.exceptions import SuningError
+
+  client = MagicMock()
+  client._request_app_api.return_value = {
+    "responseData": {"notFamilies": "nope"}
+  }
+  client._decode_app_api_response.return_value = client._request_app_api.return_value
+  with pytest.raises(SuningError, match="缺少 families"):
+    list_family_infos(client)
+
+
+def test_get_device_raises_when_no_devices() -> None:
+  from xiaobiu.ac_status import get_device
+  from xiaobiu.exceptions import SuningError
+
+  client = MagicMock()
+  client._request_app_api.return_value = {"responseData": {"devices": []}}
+  client._decode_app_api_response.return_value = client._request_app_api.return_value
+  with pytest.raises(SuningError, match="没有设备"):
+    get_device(client, "1")
+
+
+def test_get_device_raises_when_multiple_devices() -> None:
+  from xiaobiu.ac_status import get_device
+  from xiaobiu.exceptions import SuningError
+
+  client = MagicMock()
+  client._request_app_api.return_value = {
+    "responseData": {
+      "devices": [
+        {"id": "1", "name": "light"},
+        {"id": "2", "name": "fan"},
+      ]
+    }
+  }
+  client._decode_app_api_response.return_value = client._request_app_api.return_value
+  with pytest.raises(SuningError, match="多个设备"):
+    get_device(client, "1")
+
+
+def test_bootstrap_service_rejects_unknown_name() -> None:
+  from xiaobiu.ac_status import bootstrap_service
+  from xiaobiu.exceptions import SuningError
+
+  client = MagicMock()
+  with pytest.raises(SuningError, match="unsupported service bootstrap"):
+    bootstrap_service(client, "nope")
+
+
+def test_normalize_includes_unknown_mode_note_when_c_mode_unmapped() -> None:
+  client = _build_client()
+  status = client._normalize_air_conditioner_status(
+    {
+      "id": "d", "name": "n", "online": "1",
+      "status": {"onlineStatus": "1", "C_POWER": "1", "C_MODE": "7"},
+    }
+  )
+  assert status.hvac_mode is None
+  joined = " ".join(status.ha_climate_preview.notes or [])
+  assert "原始模式值为 7" in joined
