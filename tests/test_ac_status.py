@@ -176,7 +176,7 @@ def test_prepare_sms_login_uses_mobile_post_form(monkeypatch) -> None:
   cipher = SuAESCipher()
   captured: dict[str, object] = {}
 
-  monkeypatch.setattr(client, "initialize", lambda: client.config)
+  monkeypatch.setattr("xiaobiu.sms_login.initialize", lambda _c: client.config)
 
   expected_inner = {
     "status": "COMPLETE",
