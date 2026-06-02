@@ -103,11 +103,21 @@ client.get_device_panel_template(family_id=37790, device_id="...")
 | 自动 | `set_hvac_mode(AUTO)` | `C_MODE=6` | `hvac_mode = auto` |
 | 一键通 | `set_hvac_mode(QUICK)` | `C_MODE=5` | `hvac_mode = auto` (map) |
 | 微风/低/中/高/强风 | `set_fan_mode(SILENT/LOW/MEDIUM/HIGH/TURBO)` | `C_FANSPEED=1..5` | `fan_mode` |
-| 上下摆风 | `set_vertical_swing(on=)` | `C_AIRVERTICAL` | `swing_vertical_mode` |
+| 上下摆风 | `set_vertical_swing(on=)` | `C_AIRVERTICAL` | `swing_mode` (HA 把 `swing_mode` 默认指垂直) |
 | 左右摆风 | `set_horizontal_swing(on=)` | `C_AIRHORIZONTAL` | `swing_horizontal_mode` |
 | ECO | `set_eco(on=)` | `C_ECO` | `preset_mode = eco` |
 | 空气清新 | `set_fresh_air(on=)` | `C_FRESHAIR` | `preset_mode = fresh_air` |
 | 电辅热 | `set_aux_heat(on=)` | `C_ELECHEATING` | `preset_mode = aux_heat` |
+
+### `swing_mode` 集成注意事项
+
+按 Home Assistant climate entity 惯例：
+
+- **`swing_mode` 属性专指垂直摆风**。HA 集成作者应在 `async_set_swing_mode(swing_mode)` 里把 `"vertical"` / `"off"` 映射到 `client.set_swing_mode(SwingMode.VERTICAL)` / `SwingMode.OFF`。
+- **`swing_horizontal_mode` 是独立属性**。`"on"` / `"off"` 映射到 `client.set_horizontal_swing(on=True/False)`。
+- **`SwingMode.ON` 不支持**。苏宁设备物理上没有"开摆不指定方向"语义——要么 vertical 要么 horizontal，要么都开。HA 集成遇到 `swing_mode = "on"` 时应映射到 `SwingMode.BOTH`（或 `VERTICAL`）。
+- **`set_swing_mode(SwingMode.HORIZONTAL)` 与 `set_horizontal_swing(on=True)` 设备层等价**（都把 `C_AIRHORIZONTAL` 设为 1），但**HA 集成应走 `set_horizontal_swing`** 保持与 HA 字段语义一致。`set_swing_mode(SwingMode.HORIZONTAL)` 主要给脚本/手动控制用，一次发两字段。
+- **`set_swing_mode(SwingMode.BOTH)` 等价于 `set_vertical_swing(on=True); set_horizontal_swing(on=True)`，但只走一次网络**。HA 集成没有"BOTH"标准值，组合调用更标准。
 
 ## CLI
 
