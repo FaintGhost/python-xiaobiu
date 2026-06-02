@@ -282,8 +282,9 @@ def test_get_device_panel_template_hits_url_and_parses() -> None:
   assert template is not None
   assert template.device_id == "000165f9b029afa2e5d8"
   assert template.model_id == "0001000200150000"
-  assert "C_POWER" in template.components
-  assert "C_MODE" in template.components
+  assert "C_POWER" in template.fields
+  assert "C_MODE" in template.fields
+  assert "cool" in template.hvac_modes
   called_url = client.session.get.call_args.args[0]
   assert called_url.startswith(PANEL_QUERY_URL)
   assert "deviceId=000165f9b029afa2e5d8" in called_url
@@ -566,3 +567,193 @@ def test_set_aux_heat_sends_field_directly() -> None:
   assert set_aux_heat is not None
   assert _capture_cmd(set_aux_heat, on=True) == {"C_ELECHEATING": "1"}
   assert _capture_cmd(set_aux_heat, on=False) == {"C_ELECHEATING": "0"}
+
+
+# ---------------------------------------------------------------------------
+# infer_hvac_action
+# ---------------------------------------------------------------------------
+
+
+def test_infer_hvac_action_off_when_power_off() -> None:
+  from xiaobiu.ac_control import infer_hvac_action
+
+  assert (
+    infer_hvac_action(
+      power_on=False, hvac_mode=HvacMode.HEAT, current_temp=10.0, target_temp=20.0,
+    )
+    == "off"
+  )
+
+
+def test_infer_hvac_action_none_when_power_unknown() -> None:
+  from xiaobiu.ac_control import infer_hvac_action
+
+  assert (
+    infer_hvac_action(
+      power_on=None, hvac_mode=HvacMode.HEAT, current_temp=10.0, target_temp=20.0,
+    )
+    is None
+  )
+
+
+def test_infer_hvac_action_heating_when_below_target() -> None:
+  from xiaobiu.ac_control import infer_hvac_action
+
+  assert (
+    infer_hvac_action(
+      power_on=True, hvac_mode=HvacMode.HEAT,
+      current_temp=18.0, target_temp=22.0,
+    )
+    == "heating"
+  )
+
+
+def test_infer_hvac_action_cooling_when_above_target() -> None:
+  from xiaobiu.ac_control import infer_hvac_action
+
+  assert (
+    infer_hvac_action(
+      power_on=True, hvac_mode=HvacMode.COOL,
+      current_temp=28.0, target_temp=24.0,
+    )
+    == "cooling"
+  )
+
+
+def test_infer_hvac_action_idle_when_at_target() -> None:
+  from xiaobiu.ac_control import infer_hvac_action
+
+  assert (
+    infer_hvac_action(
+      power_on=True, hvac_mode=HvacMode.HEAT,
+      current_temp=22.0, target_temp=22.0,
+    )
+    == "idle"
+  )
+
+
+def test_infer_hvac_action_dry_and_fan() -> None:
+  from xiaobiu.ac_control import infer_hvac_action
+
+  assert (
+    infer_hvac_action(
+      power_on=True, hvac_mode=HvacMode.DRY, current_temp=24.0, target_temp=24.0,
+    )
+    == "drying"
+  )
+  assert (
+    infer_hvac_action(
+      power_on=True, hvac_mode=HvacMode.FAN_ONLY, current_temp=24.0, target_temp=24.0,
+    )
+    == "fan"
+  )
+
+
+def test_infer_hvac_action_auto_picks_heating_or_cooling() -> None:
+  from xiaobiu.ac_control import infer_hvac_action
+
+  assert (
+    infer_hvac_action(
+      power_on=True, hvac_mode=HvacMode.AUTO,
+      current_temp=18.0, target_temp=22.0,
+    )
+    == "heating"
+  )
+  assert (
+    infer_hvac_action(
+      power_on=True, hvac_mode=HvacMode.AUTO,
+      current_temp=28.0, target_temp=22.0,
+    )
+    == "cooling"
+  )
+  assert (
+    infer_hvac_action(
+      power_on=True, hvac_mode=HvacMode.AUTO,
+      current_temp=22.0, target_temp=22.0,
+    )
+    == "idle"
+  )
+
+
+def test_infer_hvac_action_quick_treated_like_heat() -> None:
+  from xiaobiu.ac_control import infer_hvac_action
+
+  assert (
+    infer_hvac_action(
+      power_on=True, hvac_mode=HvacMode.QUICK,
+      current_temp=18.0, target_temp=22.0,
+    )
+    == "heating"
+  )
+
+
+def test_infer_hvac_action_idle_when_temps_missing() -> None:
+  from xiaobiu.ac_control import infer_hvac_action
+
+  assert (
+    infer_hvac_action(
+      power_on=True, hvac_mode=HvacMode.HEAT, current_temp=None, target_temp=22.0,
+    )
+    == "idle"
+  )
+
+
+# ---------------------------------------------------------------------------
+# build_capabilities_from_template
+# ---------------------------------------------------------------------------
+
+
+def test_build_capabilities_emits_modes_for_supported_fields() -> None:
+  from xiaobiu.ac_control import build_capabilities_from_template
+
+  caps = build_capabilities_from_template(
+    device_id="d",
+    model_id="m",
+    category_id="0002",
+    fields=["C_MODE", "C_FANSPEED", "C_AIRVERTICAL", "C_AIRHORIZONTAL", "C_ECO"],
+  )
+  assert "cool" in caps.hvac_modes
+  assert "heat" in caps.hvac_modes
+  assert "auto" in caps.fan_modes
+  assert "turbo" in caps.fan_modes
+  assert "off" in caps.swing_modes
+  assert "both" in caps.swing_modes
+  assert "eco" in caps.preset_modes
+  assert caps.supports_vertical_swing is True
+  assert caps.supports_horizontal_swing is True
+  assert caps.supports_eco is True
+  assert caps.supports_fresh_air is False
+
+
+def test_build_capabilities_marks_no_fields_when_template_empty() -> None:
+  from xiaobiu.ac_control import build_capabilities_from_template
+
+  caps = build_capabilities_from_template(
+    device_id="d", model_id="m", category_id="0002", fields=[],
+  )
+  assert caps.hvac_modes == []
+  assert caps.fan_modes == []
+  assert caps.swing_modes == []
+  assert caps.preset_modes == ["none"]
+  assert caps.supports_vertical_swing is False
+
+
+def test_build_capabilities_includes_aux_heat_when_field_present() -> None:
+  from xiaobiu.ac_control import build_capabilities_from_template
+
+  caps = build_capabilities_from_template(
+    device_id="d", model_id="m", category_id="0002",
+    fields=["C_MODE", "C_ELECHEATING"],
+  )
+  assert "aux_heat" in caps.preset_modes
+  assert caps.supports_aux_heat is True
+
+
+def test_build_capabilities_quick_appears_in_hvac_modes() -> None:
+  from xiaobiu.ac_control import build_capabilities_from_template
+
+  caps = build_capabilities_from_template(
+    device_id="d", model_id="m", category_id="0002", fields=["C_MODE"],
+  )
+  assert "quick" in caps.hvac_modes
+

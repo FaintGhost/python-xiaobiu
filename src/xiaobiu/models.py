@@ -98,6 +98,7 @@ class AirConditionerStatus(SuningBaseModel):
   refresh_time: str | None = None
   power_on: bool | None = None
   hvac_mode: HvacMode | None = None
+  hvac_action: HvacAction | None = None
   current_temperature: float | None = None
   target_temperature: float | None = None
   outdoor_temperature: float | None = None
@@ -146,6 +147,19 @@ class HvacMode(str, Enum):
   QUICK = "quick"
 
 
+class HvacAction(str, Enum):
+  """What the AC is actively doing right now — mirrors HA's HVACAction enum."""
+
+  OFF = "off"
+  PREHEATING = "preheating"
+  HEATING = "heating"
+  COOLING = "cooling"
+  DRYING = "drying"
+  FAN = "fan"
+  IDLE = "idle"
+  DEFROSTING = "defrosting"
+
+
 class FanSpeed(str, Enum):
   AUTO = "auto"
   SILENT = "silent"
@@ -180,3 +194,43 @@ class Timer(SuningBaseModel):
   schedule: str
   enabled: bool
   command: dict[str, str] = Field(default_factory=dict)
+
+
+class CapabilityField(SuningBaseModel):
+  """One field advertised by the device's panel template (e.g. ``C_FANSPEED``)."""
+
+  key: str
+  name: str
+  type: str
+  raw_values: list[str] = Field(default_factory=list)
+  display_values: list[str] = Field(default_factory=list)
+  sn_property_id: str | None = None
+  icon_urls: list[str] = Field(default_factory=list)
+  raw: dict[str, Any] = Field(default_factory=dict)
+
+
+class DeviceCapabilities(SuningBaseModel):
+  """Capabilities advertised by the device's panel template.
+
+  Drives the HA climate entity's ``hvac_modes`` / ``fan_modes`` /
+  ``swing_modes`` / ``preset_modes`` lists so the integration can
+  advertise only what the device actually supports.
+  """
+
+  device_id: str
+  model_id: str
+  category_id: str
+  fields: dict[str, CapabilityField] = Field(default_factory=dict)
+  hvac_modes: list[str] = Field(default_factory=list)
+  fan_modes: list[str] = Field(default_factory=list)
+  swing_modes: list[str] = Field(default_factory=list)
+  preset_modes: list[str] = Field(default_factory=list)
+  supports_vertical_swing: bool = False
+  supports_horizontal_swing: bool = False
+  supports_eco: bool = False
+  supports_fresh_air: bool = False
+  supports_aux_heat: bool = False
+  supports_target_temperature: bool = True
+  min_target_temperature: float = 16.0
+  max_target_temperature: float = 32.0
+  raw: dict[str, Any] = Field(default_factory=dict)

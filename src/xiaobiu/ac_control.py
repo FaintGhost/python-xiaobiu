@@ -19,7 +19,10 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from .exceptions import SuningError
 from .models import (
+  CapabilityField,
+  DeviceCapabilities,
   FanSpeed,
+  HvacAction,
   HvacMode,
   PanelTemplate,
   PresetMode,
@@ -169,11 +172,14 @@ def get_device_panel_template(
   model_id: str,
   *,
   category_id: str = "0002",
-) -> PanelTemplate | None:
-  """Fetch the runtime panel template for ``device_id``.
+) -> DeviceCapabilities | None:
+  """Fetch the device's :class:`DeviceCapabilities`.
 
   Returns ``None`` on any failure (HTTP error, malformed JSON, code != 0)
-  so the caller can keep going on a partial response.
+  so the caller can keep going on a partial response.  Kept the legacy
+  name for backward compatibility — the returned object's
+  :class:`DeviceCapabilities` includes a ``raw`` payload carrying the
+  unparsed template.
   """
 
   query = (
@@ -195,10 +201,122 @@ def get_device_panel_template(
   components = parse_panel_components(containers)
   if components is None:
     return None
-  return PanelTemplate(
+  return build_capabilities_from_template(
     device_id=device_id,
     model_id=model_id,
-    components=components,
+    category_id=category_id,
+    fields=components,
+    raw=data_block,
+  )
+
+
+def build_capabilities_from_template(
+  *,
+  device_id: str,
+  model_id: str,
+  category_id: str,
+  fields: list[str],
+  raw: Mapping[str, Any] | None = None,
+) -> DeviceCapabilities:
+  """Build a :class:`DeviceCapabilities` from a flattened field set.
+
+  ``fields`` is the sorted list of ``C_*`` / ``SN_*`` keys returned by
+  :func:`parse_panel_components`.  The boolean support flags are derived
+  from membership; the HA-facing ``*_modes`` lists always include
+  the standard ``off`` sentinel so the integration can render the
+  toggle.
+  """
+
+  raw_dict = dict(raw) if raw else {}
+  keys_block = raw_dict.get("keys") or []
+  field_map: dict[str, CapabilityField] = {}
+  for key_entry in keys_block:
+    if not isinstance(key_entry, Mapping):
+      continue
+    raw_key = str(key_entry.get("key") or "")
+    if not raw_key:
+      continue
+    field_map[raw_key] = CapabilityField(
+      key=raw_key,
+      name=str(key_entry.get("name") or raw_key),
+      type=str(key_entry.get("type") or ""),
+      raw_values=[str(v) for v in (key_entry.get("k") or [])],
+      display_values=[str(v) for v in (key_entry.get("v") or [])],
+      sn_property_id=key_entry.get("snPropertyId"),
+      icon_urls=[str(u) for u in (key_entry.get("icon") or [])],
+      raw=dict(key_entry),
+    )
+  # Fallback: when the panel template lacks a ``keys`` block, seed the
+  # field map with placeholder CapabilityFields derived from the
+  # flattened field set so callers can still ask ``"C_POWER" in
+  # caps.fields``.
+  for raw_key in fields:
+    if raw_key in field_map:
+      continue
+    field_map[raw_key] = CapabilityField(
+      key=raw_key,
+      name=raw_key,
+      type="",
+    )
+
+  has = set(fields)
+  hvac_modes: list[str] = []
+  # The device speaks a single C_MODE knob; we expose the HA-equivalent
+  # standard names.  We never report HEAT_COOL because the AC has no
+  # range-control primitive — AUTO is the implicit form.
+  if "C_MODE" in has:
+    hvac_modes = [
+      HvacMode.OFF.value,
+      HvacMode.COOL.value,
+      HvacMode.HEAT.value,
+      HvacMode.DRY.value,
+      HvacMode.FAN_ONLY.value,
+      HvacMode.AUTO.value,
+    ]
+    # QUICK is inferred (C_MODE=5) so we add it when the field is present.
+    hvac_modes.append(HvacMode.QUICK.value)
+  fan_modes: list[str] = []
+  if "C_FANSPEED" in has:
+    fan_modes = [
+      FanSpeed.AUTO.value,
+      FanSpeed.SILENT.value,
+      FanSpeed.LOW.value,
+      FanSpeed.MEDIUM.value,
+      FanSpeed.HIGH.value,
+      FanSpeed.TURBO.value,
+    ]
+  swing_modes: list[str] = []
+  if "C_AIRVERTICAL" in has or "C_AIRHORIZONTAL" in has:
+    swing_modes = [
+      SwingMode.OFF.value,
+      SwingMode.VERTICAL.value,
+      SwingMode.HORIZONTAL.value,
+      SwingMode.BOTH.value,
+    ]
+  preset_modes: list[str] = [PresetMode.NONE.value]
+  if "C_ECO" in has:
+    preset_modes.append(PresetMode.ECO.value)
+  if "C_FRESHAIR" in has:
+    preset_modes.append(PresetMode.FRESH_AIR.value)
+  if "C_ELECHEATING" in has:
+    preset_modes.append(PresetMode.AUX_HEAT.value)
+
+  return DeviceCapabilities(
+    device_id=device_id,
+    model_id=model_id,
+    category_id=category_id,
+    fields=field_map,
+    hvac_modes=hvac_modes,
+    fan_modes=fan_modes,
+    swing_modes=swing_modes,
+    preset_modes=preset_modes,
+    supports_vertical_swing="C_AIRVERTICAL" in has,
+    supports_horizontal_swing="C_AIRHORIZONTAL" in has,
+    supports_eco="C_ECO" in has,
+    supports_fresh_air="C_FRESHAIR" in has,
+    supports_aux_heat="C_ELECHEATING" in has,
+    supports_target_temperature="C_TEMPERATURE" in has,
+    raw=raw_dict,
   )
 
 
@@ -267,6 +385,52 @@ def infer_fan_speed(speed_raw: Any) -> FanSpeed | None:
   if speed_raw is None:
     return None
   return C_FIELD_TO_FAN.get(str(speed_raw).strip())
+
+
+def infer_hvac_action(
+  *,
+  power_on: bool | None,
+  hvac_mode: HvacMode | str | None,
+  current_temp: float | None,
+  target_temp: float | None,
+) -> HvacAction | None:
+  """Infer the device's current :class:`HvacAction` from its status fields.
+
+  Power off → ``OFF``.  Mode is ``DRY`` / ``FAN_ONLY`` → ``DRYING`` / ``FAN``.
+  Mode is ``HEAT`` or ``COOL`` → ``HEATING`` / ``COOLING`` if there is still
+  work to do (current temp below / above target), else ``IDLE``.
+  Mode is ``AUTO`` → behave like ``HEAT_COOL``: pick the side that has work.
+  ``HEAT_COOL`` itself collapses to whichever side has work (else ``IDLE``).
+  When ``power_on`` is unknown we return ``None`` so HA can render
+  ``unavailable`` rather than guess.
+  """
+
+  if power_on is None:
+    return None
+  if power_on is False:
+    return HvacAction.OFF
+  if hvac_mode is None:
+    return HvacAction.IDLE
+  mode_value = hvac_mode.value if isinstance(hvac_mode, HvacMode) else str(hvac_mode)
+  if mode_value == HvacMode.OFF.value:
+    return HvacAction.OFF
+  if mode_value == HvacMode.DRY.value:
+    return HvacAction.DRYING
+  if mode_value == HvacMode.FAN_ONLY.value:
+    return HvacAction.FAN
+  if current_temp is None or target_temp is None:
+    return HvacAction.IDLE
+  if mode_value in (HvacMode.HEAT.value, HvacMode.QUICK.value):
+    return HvacAction.HEATING if current_temp < target_temp else HvacAction.IDLE
+  if mode_value == HvacMode.COOL.value:
+    return HvacAction.COOLING if current_temp > target_temp else HvacAction.IDLE
+  if mode_value in (HvacMode.AUTO.value, HvacMode.HEAT_COOL.value):
+    if current_temp < target_temp:
+      return HvacAction.HEATING
+    if current_temp > target_temp:
+      return HvacAction.COOLING
+    return HvacAction.IDLE
+  return HvacAction.IDLE
 
 
 # ---------------------------------------------------------------------------

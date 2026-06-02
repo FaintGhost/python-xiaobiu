@@ -119,6 +119,48 @@ client.get_device_panel_template(family_id=37790, device_id="...")
 - **`set_swing_mode(SwingMode.HORIZONTAL)` 与 `set_horizontal_swing(on=True)` 设备层等价**（都把 `C_AIRHORIZONTAL` 设为 1），但**HA 集成应走 `set_horizontal_swing`** 保持与 HA 字段语义一致。`set_swing_mode(SwingMode.HORIZONTAL)` 主要给脚本/手动控制用，一次发两字段。
 - **`set_swing_mode(SwingMode.BOTH)` 等价于 `set_vertical_swing(on=True); set_horizontal_swing(on=True)`，但只走一次网络**。HA 集成没有"BOTH"标准值，组合调用更标准。
 
+### `hvac_action` 推断
+
+`AirConditionerStatus.hvac_action` 由 `ac_control.infer_hvac_action` 在 `_normalize_air_conditioner_status` 时填入，推断规则：
+
+| 条件 | 推断 |
+|------|------|
+| `power_on=False` 或 `hvac_mode=off` | `HvacAction.OFF` |
+| `hvac_mode=heat` 且 `current_temp < target_temp` | `HvacAction.HEATING` |
+| `hvac_mode=heat` 且 `current_temp >= target_temp` | `HvacAction.IDLE` |
+| `hvac_mode=cool` 且 `current_temp > target_temp` | `HvacAction.COOLING` |
+| `hvac_mode=cool` 且 `current_temp <= target_temp` | `HvacAction.IDLE` |
+| `hvac_mode=dry` | `HvacAction.DRYING` |
+| `hvac_mode=fan_only` | `HvacAction.FAN` |
+| `hvac_mode=auto` / `heat_cool` | 根据 current vs target 二选一（heating/cooling/idle） |
+| `power_on=None`（设备离线） | `HvacAction=None` → HA 渲染 `unavailable` |
+
+### 动态能力表（`DeviceCapabilities`）
+
+`client.get_device_panel_template(family_id, device_id)` 现在返回 `DeviceCapabilities`，从 `queryTemplate.do` 实时解析：
+
+```python
+caps = client.get_device_panel_template(family_id=37790, device_id="000165f9b029afa2e5d8")
+caps.hvac_modes           # ["off", "cool", "heat", "dry", "fan_only", "auto", "quick"]
+caps.fan_modes            # ["auto", "silent", "low", "medium", "high", "turbo"]
+caps.swing_modes          # ["off", "vertical", "horizontal", "both"]
+caps.preset_modes         # ["none", "eco", "fresh_air", "aux_heat"]
+caps.supports_vertical_swing   # True
+caps.supports_horizontal_swing # True
+caps.supports_eco
+caps.supports_fresh_air
+caps.supports_aux_heat
+caps.fields["C_FANSPEED"].raw_values     # ["0","1","2","3","4","5"]
+caps.fields["C_FANSPEED"].display_values  # ["自动","微风","低风","中风","高风","强风"]
+caps.fields["C_FANSPEED"].icon_urls       # [6 个图标 URL]
+```
+
+HA 集成应在 `async_setup_entry` 时调一次 `get_device_panel_template` 缓存起来，**直接喂给 `hvac_modes` / `fan_modes` / `swing_modes` / `preset_modes` 属性**——不要再硬编码列表。
+
+### `preset_mode` 自定义值
+
+按 HA 文档，自定义 preset 是允许的（"you're also allowed to add custom presets"）。所以 `fresh_air` 和 `aux_heat` 不在 HA 标准列表里，但 HA 集成**可以**把它们放进 `preset_modes` 列表（中文用户友好）或直接用 `aux_heat` 这个 HA 官方名（与 `turn_aux_heat_on/off` 服务对应）。
+
 ## CLI
 
 ```bash

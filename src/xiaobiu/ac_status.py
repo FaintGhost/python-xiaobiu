@@ -23,8 +23,10 @@ from .models import (
   AirConditionerStatus,
   FamilyInfo,
   HAClimatePreview,
+  HvacAction,
   HvacMode,
 )
+from . import ac_control
 
 MEMBER_BASE_INFO_URL = "https://shcss.suning.com/shcss-web/api/member/queryMemberBaseInfo.do"
 FAMILY_LIST_URL = "https://itapig.suning.com/api/trade/shcss/queryAllFamily"
@@ -233,6 +235,16 @@ def _normalize_air_conditioner_status(device: dict[str, Any]) -> AirConditionerS
   )
   mode_raw = _coalesce(raw_status.get("SN_MODE"), raw_status.get("C_MODE"))
   hvac_mode = infer_hvac_mode(power_on=power_on, mode_raw=mode_raw) if online else None
+  hvac_action = (
+    ac_control.infer_hvac_action(
+      power_on=power_on,
+      hvac_mode=hvac_mode,
+      current_temp=current_temperature,
+      target_temp=target_temperature,
+    )
+    if online
+    else None
+  )
 
   status = AirConditionerStatus(
     device_id=str(device.get("id")),
@@ -249,6 +261,7 @@ def _normalize_air_conditioner_status(device: dict[str, Any]) -> AirConditionerS
     refresh_time=raw_status.get("refreshTime"),
     power_on=power_on,
     hvac_mode=hvac_mode,
+    hvac_action=hvac_action,
     current_temperature=current_temperature,
     target_temperature=target_temperature,
     outdoor_temperature=outdoor_temperature,
