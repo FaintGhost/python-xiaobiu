@@ -4,6 +4,27 @@ All notable changes to `python-xiaobiu` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-06-02
+
+### Added
+- `HvacAction` enum (`OFF` / `PREHEATING` / `HEATING` / `COOLING` /
+  `DRYING` / `FAN` / `IDLE` / `DEFROSTING`) and
+  `AirConditionerStatus.hvac_action` field, inferred from
+  `power_on × hvac_mode × current_temp vs target_temp` so HA can
+  render the live state of the AC.
+- `DeviceCapabilities` / `CapabilityField` models driven by the
+  device's panel template.  `client.get_device_panel_template()`
+  now returns a `DeviceCapabilities` with `hvac_modes` /
+  `fan_modes` / `swing_modes` / `preset_modes` lists and per-field
+  metadata (raw / display / icon URLs) parsed from `queryTemplate.do`.
+  This lets HA integrators advertise exactly what the device supports
+  instead of hard-coding the lists.
+
+### Changed
+- README "Air Conditioner Control" section now documents
+  `hvac_action` inference rules and shows a `DeviceCapabilities`
+  usage snippet.
+
 ## [0.2.0] - 2026-06-02
 
 ### Added
