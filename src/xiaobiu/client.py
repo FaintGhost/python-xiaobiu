@@ -366,8 +366,12 @@ class SuningSmartHomeClient:
   def _build_ha_climate_preview(self, status: AirConditionerStatus) -> Any:
     return ac_status._build_ha_climate_preview(status)
 
-  def _infer_hvac_mode(self, *, power_on: bool | None, mode_raw: Any) -> HvacMode | None:
-    return ac_status.infer_hvac_mode(power_on=power_on, mode_raw=mode_raw)
+  def _infer_hvac_mode(
+    self, *, power_on: bool | None, mode_raw: Any, field_kind: str = "sn",
+  ) -> HvacMode | None:
+    return ac_status.infer_hvac_mode(
+      power_on=power_on, mode_raw=mode_raw, field_kind=field_kind,
+    )
 
   # SMS-login private helpers (re-exported for the test suite).
   def _captcha_fields(self, captcha: CaptchaSolution) -> dict[str, str]:

@@ -228,13 +228,23 @@ def _normalize_air_conditioner_status(device: dict[str, Any]) -> AirConditionerS
     _coalesce(raw_status.get("SN_AIRVERTICAL"), raw_status.get("C_AIRVERTICAL"))
   )
   eco_enabled = _parse_bool_flag(_coalesce(raw_status.get("SN_ECO"), raw_status.get("C_ECO")))
-  purify_enabled = _parse_bool_flag(raw_status.get("SN_PURIFY"))
-  fresh_air_enabled = _parse_bool_flag(raw_status.get("C_FRESHAIR"))
+  purify_enabled = _parse_bool_flag(
+    _coalesce(raw_status.get("SN_PURIFY"), raw_status.get("C_FRESHAIR"))
+  )
+  fresh_air_enabled = _parse_bool_flag(
+    _coalesce(raw_status.get("C_FRESHAIR"), raw_status.get("SN_PURIFY"))
+  )
   electric_heating_enabled = _parse_bool_flag(
     _coalesce(raw_status.get("SN_ELECHEATING"), raw_status.get("C_ELECHEATING"))
   )
-  mode_raw = _coalesce(raw_status.get("SN_MODE"), raw_status.get("C_MODE"))
-  hvac_mode = infer_hvac_mode(power_on=power_on, mode_raw=mode_raw) if online else None
+  sn_mode_raw = _coalesce(raw_status.get("SN_MODE"))
+  mode_raw = _coalesce(sn_mode_raw, raw_status.get("C_MODE"))
+  mode_field_kind = "sn" if sn_mode_raw is not None else "c"
+  hvac_mode = (
+    infer_hvac_mode(power_on=power_on, mode_raw=mode_raw, field_kind=mode_field_kind)
+    if online
+    else None
+  )
   hvac_action = (
     ac_control.infer_hvac_action(
       power_on=power_on,
@@ -282,12 +292,19 @@ def _normalize_air_conditioner_status(device: dict[str, Any]) -> AirConditionerS
   )
 
 
-def infer_hvac_mode(*, power_on: bool | None, mode_raw: Any) -> HvacMode | None:
+def infer_hvac_mode(
+  *,
+  power_on: bool | None,
+  mode_raw: Any,
+  field_kind: str = "sn",
+) -> HvacMode | None:
   """Translate raw status fields into a typed :class:`HvacMode`."""
 
   from . import ac_control
 
-  return ac_control.infer_hvac_mode(power_on=power_on, mode_raw=mode_raw)
+  return ac_control.infer_hvac_mode(
+    power_on=power_on, mode_raw=mode_raw, field_kind=field_kind,
+  )
 
 
 def _is_air_conditioner_device(device: dict[str, Any]) -> bool:

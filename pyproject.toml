@@ -1,6 +1,6 @@
 [project]
 name = "python-xiaobiu"
-version = "0.2.1"
+version = "0.2.2"
 description = "Suning biu smart home SMS login and session client"
 readme = "README.md"
 license = { text = "MIT" }
@@ -16,9 +16,11 @@ classifiers = [
 ]
 requires-python = ">=3.14"
 dependencies = [
-  "cryptography>=44.0.0",
+  "cryptography>=48.0.1",
+  "idna>=3.15",
   "pydantic>=2.0.0",
-  "requests>=2.28.0",
+  "requests>=2.33.0",
+  "urllib3>=2.7.0",
 ]
 
 [project.urls]
@@ -30,7 +32,7 @@ xiaobiucli = "xiaobiu:main"
 
 [dependency-groups]
 dev = [
-  "pytest>=8.0.0",
+  "pytest>=9.0.3",
   "pytest-asyncio>=0.23.0",
 ]
 
@@ -40,6 +42,13 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/xiaobiu"]
+
+[tool.hatch.build]
+exclude = [
+  "/.codegraph",
+  "/.reasonix",
+  "/verify_ac.py",
+]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

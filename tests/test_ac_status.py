@@ -568,10 +568,10 @@ def test_normalize_hvac_mode_off_when_power_zero() -> None:
 
 def test_normalize_hvac_mode_cool_heat_dry_fan_auto() -> None:
   cases = {
-    "1": "cool",
-    "2": "heat",
-    "3": "fan_only",
-    "4": "dry",
+    "1": "heat",
+    "2": "cool",
+    "3": "dry",
+    "4": "fan_only",
     "6": "auto",
   }
   for raw, expected in cases.items():
@@ -583,7 +583,18 @@ def test_normalize_hvac_mode_cool_heat_dry_fan_auto() -> None:
 
 def test_normalize_hvac_mode_uses_sn_prefix_fallback() -> None:
   status = _normalize_with_status({"SN_POWER": "1", "SN_MODE": "1"})
-  assert status.hvac_mode == "cool"
+  # SN_MODE=1 is 一键通, exposed as auto.
+  assert status.hvac_mode == "auto"
+
+
+
+
+def test_normalize_hvac_mode_uses_c_encoding_when_sn_mode_is_blank() -> None:
+  status = _normalize_with_status(
+    {"SN_POWER": "1", "SN_MODE": "  ", "C_MODE": "1"},
+  )
+  assert status.mode_raw == "1"
+  assert status.hvac_mode == "heat"
 
 
 
@@ -607,8 +618,9 @@ def test_normalize_hvac_mode_unknown_mode_value_keeps_none() -> None:
 
 
 
-def test_normalize_hvac_mode_quick() -> None:
-  assert _normalize_with_status({"C_POWER": "1", "C_MODE": "5"}).hvac_mode == "quick"
+def test_normalize_hvac_mode_c_mode_5_is_fan_only() -> None:
+  # C_MODE=5 behaves the same as 4 (送风) on the tested device.
+  assert _normalize_with_status({"C_POWER": "1", "C_MODE": "5"}).hvac_mode == "fan_only"
 
 
 
@@ -700,9 +712,11 @@ def test_infer_swing_mode_returns_expected_enum() -> None:
 def test_infer_hvac_mode_resolves_known_values() -> None:
   from xiaobiu.ac_status import infer_hvac_mode
 
-  assert infer_hvac_mode(power_on=True, mode_raw="1") == HvacMode.COOL
-  assert infer_hvac_mode(power_on=True, mode_raw="2") == HvacMode.HEAT
-  assert infer_hvac_mode(power_on=True, mode_raw="5") == HvacMode.QUICK
+  # Default field_kind="sn" reads SN_MODE status values:
+  #   1=一键通(auto) 2=制冷(cool) 3=制热(heat) 4=送风(fan_only) 5=除湿(dry)
+  assert infer_hvac_mode(power_on=True, mode_raw="1") == HvacMode.AUTO
+  assert infer_hvac_mode(power_on=True, mode_raw="2") == HvacMode.COOL
+  assert infer_hvac_mode(power_on=True, mode_raw="5") == HvacMode.DRY
   assert infer_hvac_mode(power_on=True, mode_raw="bogus") is None
   assert infer_hvac_mode(power_on=False, mode_raw="1") == HvacMode.OFF
   assert infer_hvac_mode(power_on=None, mode_raw="1") is None
@@ -778,3 +792,183 @@ def test_normalize_includes_unknown_mode_note_when_c_mode_unmapped() -> None:
   assert status.hvac_mode is None
   joined = " ".join(status.ha_climate_preview.notes or [])
   assert "原始模式值为 7" in joined
+
+
+# ---------------------------------------------------------------------------
+# 端到端验证：基于 2026-06-17 真机动态测试确认的 C_MODE↔SN_MODE 对应关系
+#
+# 动态验证流程：下发 C_MODE=N → 请求 devices → 读取 SN_MODE 回报值。
+# 结果证实 C_MODE (写) 与 SN_MODE (读) 是两套不同编码：
+#   C_MODE=1(制热) → SN_MODE=3
+#   C_MODE=2(制冷) → SN_MODE=2
+#   C_MODE=3(除湿) → SN_MODE=5
+#   C_MODE=4(送风) → SN_MODE=4
+#   C_MODE=6(一键通)→ SN_MODE=1
+# ---------------------------------------------------------------------------
+
+# 动态验证确认的 C_MODE(写) → SN_MODE(读) 对应
+C_MODE_TO_SN_MODE: dict[str, str] = {
+  "1": "3",  # 制热
+  "2": "2",  # 制冷
+  "3": "5",  # 除湿
+  "4": "4",  # 送风
+  "6": "1",  # 一键通/自动
+}
+
+
+@pytest.mark.parametrize("c_mode,sn_mode", list(C_MODE_TO_SN_MODE.items()))
+def test_dynamic_verified_c_mode_to_sn_mode_mapping(c_mode: str, sn_mode: str) -> None:
+  """真机动态验证：下发 C_MODE 后设备回报的 SN_MODE 值。"""
+  assert C_MODE_TO_SN_MODE[c_mode] == sn_mode
+
+
+@pytest.mark.parametrize("c_mode,sn_mode", list(C_MODE_TO_SN_MODE.items()))
+def test_dynamic_verified_sn_mode_decodes_to_correct_hvac_mode(
+  c_mode: str, sn_mode: str,
+) -> None:
+  """读表 SN_FIELD_TO_HVAC 必须把动态验证回报的 SN_MODE 解析成与
+  写表 C_FIELD_TO_HVAC 对 C_MODE 相同的 HvacMode。"""
+  from xiaobiu.ac_control import C_FIELD_TO_HVAC, SN_FIELD_TO_HVAC
+
+  expected = C_FIELD_TO_HVAC[c_mode]
+  actual = SN_FIELD_TO_HVAC[sn_mode]
+  assert actual is expected, (
+    f"C_MODE={c_mode}→{expected.value} 但 SN_MODE={sn_mode}→{actual.value}"
+  )
+
+
+def test_dynamic_verified_full_device_status_parses_correctly() -> None:
+  """用真机关机状态的完整 JSON 验证 _normalize_air_conditioner_status 的每个字段。
+
+  数据来自 2026-06-17 真机 devices 响应（惠而浦空调，model 0001000200150000）。
+  设备当时关机（SN_POWER=0），SN_MODE=2（制冷）。
+  """
+  client = _build_client()
+  device = {
+    "id": "000165f9b029afa2e5d8",
+    "name": "惠而浦空调",
+    "model": "0001000200150000",
+    "online": "1",
+    "gId": "3149356478",
+    "gName": "次卧",
+    "fId": "4770504",
+    "categoryId": "0002",
+    "p1": "<font color='#333333'>在线</font>",
+    "time": "2026-06-14 22:35:41",
+    "status": {
+      "C_OUTDOORTEMP": "0",
+      "C_POWER": "0",
+      "SN_ELECHEATING": "0",
+      "refreshTime": "20260617231854",
+      "onlineStatus": "1",
+      "SN_POWER": "0",
+      "SN_INDOORTEMP": "27.6",
+      "SN_ECO": "0",
+      "O_PS": "1",
+      "SN_MODE": "2",
+      "C_AIRHORIZONTAL": "1",
+      "C_INDOORTEMP": "27.6",
+      "SN_PURIFY": "1",
+      "C_AIRVERTICAL": "1",
+      "C_FANSPEED": "1",
+      "C_ECO": "0",
+      "SN_AIRHORIZONTAL": "1",
+      "C_MODE": "2",
+      "SN_AIRVERTICAL": "1",
+      "C_TEMPERATURE": "24.0",
+      "SN_TEMPERATURE": "24.0",
+      "C_ELECHEATING": "0",
+      "C_FRESHAIR": "1",
+      "SN_FANSPEED": "1",
+    },
+  }
+  status = client._normalize_air_conditioner_status(device)
+
+  # 设备在线但关机
+  assert status.available is True
+  assert status.online is True
+  assert status.power_on is False
+  assert status.hvac_mode == HvacMode.OFF
+  assert status.hvac_action is not None
+  assert status.hvac_action.value == "off"
+
+  # 温度
+  assert status.current_temperature == 27.6
+  assert status.target_temperature == 24.0
+  assert status.outdoor_temperature == 0.0
+
+  # 模式原始值 (SN_MODE=2 优先)
+  assert status.mode_raw == "2"
+
+  # 风速 (SN_FANSPEED=1 → 微风)
+  assert status.fan_mode_raw == "1"
+
+  # 摆风
+  assert status.swing_vertical is True
+  assert status.swing_horizontal is True
+
+  # 预设
+  assert status.eco_enabled is False
+  assert status.purify_enabled is True   # SN_PURIFY=1
+  assert status.fresh_air_enabled is True  # C_FRESHAIR=1 (= SN_PURIFY)
+  assert status.electric_heating_enabled is False
+
+  # 原始数据保留
+  assert status.raw_status["SN_MODE"] == "2"
+  assert status.raw_device["id"] == "000165f9b029afa2e5d8"
+
+
+def test_dynamic_verified_c_freshair_equals_sn_purify() -> None:
+  """动态验证确认 C_FRESHAIR 与 SN_PURIFY 是同一物理量（值始终一致）。"""
+  client = _build_client()
+  for val in ("0", "1"):
+    status = client._normalize_air_conditioner_status(
+      {
+        "id": "d", "name": "n", "online": "1", "categoryId": "0002",
+        "status": {
+          "onlineStatus": "1", "C_POWER": "1",
+          "C_FRESHAIR": val, "SN_PURIFY": val,
+        },
+      }
+    )
+    assert status.fresh_air_enabled == (val == "1")
+    assert status.purify_enabled == (val == "1")
+
+
+def test_fresh_air_falls_back_to_sn_purify_when_c_freshair_absent() -> None:
+  """C_FRESHAIR 缺失时，fresh_air_enabled 应从 SN_PURIFY fallback。"""
+  client = _build_client()
+  status = client._normalize_air_conditioner_status(
+    {
+      "id": "d", "name": "n", "online": "1", "categoryId": "0002",
+      "status": {"onlineStatus": "1", "C_POWER": "1", "SN_PURIFY": "1"},
+    }
+  )
+  assert status.fresh_air_enabled is True
+  assert status.purify_enabled is True
+
+
+def test_purify_falls_back_to_c_freshair_when_sn_purify_absent() -> None:
+  """SN_PURIFY 缺失时，purify_enabled 应从 C_FRESHAIR fallback。"""
+  client = _build_client()
+  status = client._normalize_air_conditioner_status(
+    {
+      "id": "d", "name": "n", "online": "1", "categoryId": "0002",
+      "status": {"onlineStatus": "1", "C_POWER": "1", "C_FRESHAIR": "1"},
+    }
+  )
+  assert status.purify_enabled is True
+  assert status.fresh_air_enabled is True
+
+
+def test_fresh_air_and_purify_both_none_when_neither_field_present() -> None:
+  """两个字段都没有时，两个属性都应为 None。"""
+  client = _build_client()
+  status = client._normalize_air_conditioner_status(
+    {
+      "id": "d", "name": "n", "online": "1", "categoryId": "0002",
+      "status": {"onlineStatus": "1", "C_POWER": "1"},
+    }
+  )
+  assert status.fresh_air_enabled is None
+  assert status.purify_enabled is None

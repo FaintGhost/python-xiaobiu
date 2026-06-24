@@ -52,12 +52,12 @@ client.turn_on(family_id=37790, device_id="000165f9b029afa2e5d8")
 client.turn_off(family_id=37790, device_id="000165f9b029afa2e5d8")
 
 # Mode
-client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.COOL)   # 制冷
-client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.HEAT)   # 制热
-client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.FAN_ONLY)  # 送风
-client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.DRY)    # 除湿
-client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.AUTO)   # 自动
-client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.QUICK)  # 一键通 (C_MODE=5, 待实测确认)
+client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.HEAT)   # 制热 (C_MODE=1)
+client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.COOL)   # 制冷 (C_MODE=2)
+client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.DRY)    # 除湿 (C_MODE=3)
+client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.FAN_ONLY)  # 送风 (C_MODE=4)
+client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.AUTO)   # 一键通/自动 (C_MODE=6)
+client.set_hvac_mode(family_id=37790, device_id="...", mode=HvacMode.QUICK)  # 一键通/自动 (C_MODE=6, 与 AUTO 同)
 
 # Temperature
 client.set_temperature(family_id=37790, device_id="...", value=24.0)  # 16.0–32.0
@@ -96,18 +96,22 @@ client.get_device_panel_template(family_id=37790, device_id="...")
 | Suning App | `xiaobiu` API | `C_*` field | HA climate field |
 |------------|---------------|------------|------------------|
 | 电源开关 | `turn_on/off` | `C_POWER` | `hvac_mode = off` when off |
-| 制冷 | `set_hvac_mode(COOL)` | `C_MODE=1` | `hvac_mode = cool` |
-| 制热 | `set_hvac_mode(HEAT)` | `C_MODE=2` | `hvac_mode = heat` |
-| 送风 | `set_hvac_mode(FAN_ONLY)` | `C_MODE=3` | `hvac_mode = fan_only` |
-| 除湿 | `set_hvac_mode(DRY)` | `C_MODE=4` | `hvac_mode = dry` |
-| 自动 | `set_hvac_mode(AUTO)` | `C_MODE=6` | `hvac_mode = auto` |
-| 一键通 | `set_hvac_mode(QUICK)` | `C_MODE=5` | `hvac_mode = auto` (map) |
+| 制热 | `set_hvac_mode(HEAT)` | `C_MODE=1` | `hvac_mode = heat` |
+| 制冷 | `set_hvac_mode(COOL)` | `C_MODE=2` | `hvac_mode = cool` |
+| 除湿 | `set_hvac_mode(DRY)` | `C_MODE=3` | `hvac_mode = dry` |
+| 送风 | `set_hvac_mode(FAN_ONLY)` | `C_MODE=4` (或 `5`) | `hvac_mode = fan_only` |
+| 一键通/自动 | `set_hvac_mode(AUTO)` / `set_hvac_mode(QUICK)` | `C_MODE=6` | `hvac_mode = auto` |
 | 微风/低/中/高/强风 | `set_fan_mode(SILENT/LOW/MEDIUM/HIGH/TURBO)` | `C_FANSPEED=1..5` | `fan_mode` |
 | 上下摆风 | `set_vertical_swing(on=)` | `C_AIRVERTICAL` | `swing_mode` (HA 把 `swing_mode` 默认指垂直) |
 | 左右摆风 | `set_horizontal_swing(on=)` | `C_AIRHORIZONTAL` | `swing_horizontal_mode` |
 | ECO | `set_eco(on=)` | `C_ECO` | `preset_mode = eco` |
 | 空气清新 | `set_fresh_air(on=)` | `C_FRESHAIR` | `preset_mode = fresh_air` |
 | 电辅热 | `set_aux_heat(on=)` | `C_ELECHEATING` | `preset_mode = aux_heat` |
+
+> **读/写编码不同**:上表是**写侧**(`C_MODE` 控制值)。设备**上报状态**用的是另一套 `SN_MODE` 值:
+> `SN_MODE=1`(一键通/自动)、`2`(制冷)、`3`(制热)、`4`(送风)、`5`(除湿)。
+> `infer_hvac_mode` 读状态时默认按 `SN_MODE` 解码;下发命令时 `set_hvac_mode` 用 `C_MODE`。
+> 两套编码不一致(如 `C_MODE=1` 是制热,但 `SN_MODE=1` 是一键通),库内部已拆成两张表分别处理。
 
 ### `swing_mode` 集成注意事项
 
@@ -190,18 +194,19 @@ xiaobiucli set-fresh-air        --family-id 37790 --device-id <id> --on|--off
 xiaobiucli set-aux-heat         --family-id 37790 --device-id <id> --on|--off
 xiaobiucli timers               --family-id 37790 --device-id <id>
 xiaobiucli panel                --family-id 37790 --device-id <id>
+xiaobiucli raw-oper             --family-id 37790 --device-id <id> --cmd C_MODE=1 [--cmd KEY=VALUE ...]
 ```
 
 ## Notes
 
-- **`C_MODE=5` → `HvacMode.QUICK`** (一键通) is **inferred** — the 2026-06-01
-  HAR did not capture that button, and the App has no other unused mode
-  value in the 0–7 range.  Please confirm against a live device once
-  and adjust if the App maps a different number to 一键通.
-- **`C_ELECHEATING` (电辅热)** was surfaced by `queryTemplate.do` and
-  the value is inferred to be `0/1`.  `set_aux_heat(on=True)` enforces
-  the App's "only while heating" rule at the client (raises
-  `SuningError` if the current mode is not HEAT).
+- **`C_MODE` / `SN_MODE` 编码不同**(2026-06-17 真机实测确认):
+  - 写侧 `C_MODE`:`1`=制热、`2`=制冷、`3`=除湿、`4`=送风、`5`=送风(同 4)、`6`=一键通(≈自动)
+  - 读侧 `SN_MODE`:`1`=一键通(自动)、`2`=制冷、`3`=制热、`4`=送风、`5`=除湿
+  - 库内部用 `C_FIELD_TO_HVAC`(写)和 `SN_FIELD_TO_HVAC`(读)两张表分别处理。
+- **一键通 ≈ 自动**:这台设备没有独立的 AUTO 模式,`C_MODE=6`(一键通)在语义上最接近,
+  暴露为 `HvacMode.AUTO`;`HvacMode.QUICK` 也指向 `C_MODE=6`。
+- **`C_ELECHEATING` (电辅热)** 值域已实测确认为 `0/1`。`set_aux_heat(on=True)` 在客户端
+  强制 App 的"仅制热时生效"规则(当前模式非 HEAT 时 raise `SuningError`)。
 - **`SN_CLOUD_TIMER` writes** are not implemented in this release.
 - **Unknown `C_MODE` values** (e.g. `7`, which neither the App nor the
   capture expose) collapse to `hvac_mode = None` so Home Assistant can

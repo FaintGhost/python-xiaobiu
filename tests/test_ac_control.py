@@ -23,6 +23,7 @@ from xiaobiu.ac_control import (
   PRESET_OFF_CMD,
   PRESET_ON_CMD,
   QUERY_TIMER_URL,
+  SN_FIELD_TO_HVAC,
   SWING_TO_CMD,
 )
 from xiaobiu.client import SuningError
@@ -67,13 +68,26 @@ except ImportError:  # pragma: no cover
 
 
 def test_c_field_to_hvac_maps_all_modes() -> None:
-  assert C_FIELD_TO_HVAC["1"] is HvacMode.COOL
-  assert C_FIELD_TO_HVAC["2"] is HvacMode.HEAT
-  assert C_FIELD_TO_HVAC["3"] is HvacMode.FAN_ONLY
-  assert C_FIELD_TO_HVAC["4"] is HvacMode.DRY
-  assert C_FIELD_TO_HVAC["5"] is HvacMode.QUICK
+  # C_MODE control values, confirmed by live-device testing (2026-06-17):
+  #   1=制热 2=制冷 3=除湿 4=送风 5=送风 6=一键通(=自动)
+  assert C_FIELD_TO_HVAC["1"] is HvacMode.HEAT
+  assert C_FIELD_TO_HVAC["2"] is HvacMode.COOL
+  assert C_FIELD_TO_HVAC["3"] is HvacMode.DRY
+  assert C_FIELD_TO_HVAC["4"] is HvacMode.FAN_ONLY
+  assert C_FIELD_TO_HVAC["5"] is HvacMode.FAN_ONLY
   assert C_FIELD_TO_HVAC["6"] is HvacMode.AUTO
   assert len(C_FIELD_TO_HVAC) == 6
+
+
+def test_sn_field_to_hvac_maps_status_values() -> None:
+  # SN_MODE status values, from queryTemplate.do snV array:
+  #   1=一键通(自动) 2=制冷 3=制热 4=送风 5=除湿
+  assert SN_FIELD_TO_HVAC["1"] is HvacMode.AUTO
+  assert SN_FIELD_TO_HVAC["2"] is HvacMode.COOL
+  assert SN_FIELD_TO_HVAC["3"] is HvacMode.HEAT
+  assert SN_FIELD_TO_HVAC["4"] is HvacMode.FAN_ONLY
+  assert SN_FIELD_TO_HVAC["5"] is HvacMode.DRY
+  assert len(SN_FIELD_TO_HVAC) == 5
 
 
 def test_c_field_to_fan_maps_all_speeds() -> None:
@@ -86,9 +100,16 @@ def test_c_field_to_fan_maps_all_speeds() -> None:
   assert len(C_FIELD_TO_FAN) == 6
 
 
-def test_hvac_to_c_field_is_inverse() -> None:
-  for raw, mode in C_FIELD_TO_HVAC.items():
-    assert HVAC_TO_C_FIELD[mode] == raw
+def test_hvac_to_c_field_maps_preferred_control_value() -> None:
+  # HVAC_TO_C_FIELD is no longer a strict inverse of C_FIELD_TO_HVAC because
+  # several HvacMode values share a C_MODE code (FAN_ONLY←4,5; AUTO/QUICK←6).
+  # It must map each supported mode to its preferred control value.
+  assert HVAC_TO_C_FIELD[HvacMode.HEAT] == "1"
+  assert HVAC_TO_C_FIELD[HvacMode.COOL] == "2"
+  assert HVAC_TO_C_FIELD[HvacMode.DRY] == "3"
+  assert HVAC_TO_C_FIELD[HvacMode.FAN_ONLY] == "4"
+  assert HVAC_TO_C_FIELD[HvacMode.AUTO] == "6"
+  assert HVAC_TO_C_FIELD[HvacMode.QUICK] == "6"
 
 
 def test_fan_to_c_field_is_inverse() -> None:
@@ -287,9 +308,10 @@ def test_get_device_panel_template_hits_url_and_parses() -> None:
   assert "cool" in template.hvac_modes
   called_url = client.session.get.call_args.args[0]
   assert called_url.startswith(PANEL_QUERY_URL)
-  assert "deviceId=000165f9b029afa2e5d8" in called_url
   assert "modelId=0001000200150000" in called_url
-  assert "categoryId=0002" in called_url
+  assert "templateId=PANEL_AC" in called_url
+  assert "deviceId=" not in called_url
+  assert "categoryId=" not in called_url
 
 
 def test_get_device_panel_template_returns_none_on_error_code() -> None:
@@ -309,6 +331,45 @@ def test_get_device_panel_template_returns_none_on_exception() -> None:
   client = MagicMock()
   client.session.get.side_effect = RuntimeError("network")
   assert get_device_panel_template(client, "d", "m") is None
+
+
+def test_get_device_panel_template_sends_userid_header_from_custno_cookie() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="get_device_panel_template not implemented")
+  client = MagicMock()
+  client.session.cookies.get.return_value = "7406242293"
+  response = MagicMock()
+  response.json.return_value = {"code": "0", "data": {"containers": []}}
+  response.raise_for_status.return_value = None
+  client.session.get.return_value = response
+  get_device_panel_template(client, "d", "m")
+  call_kwargs = client.session.get.call_args.kwargs
+  assert call_kwargs["headers"]["userid"] == "7406242293"
+
+
+def test_get_device_panel_template_omits_userid_when_no_custno_cookie() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="get_device_panel_template not implemented")
+  client = MagicMock()
+  client.session.cookies.get.return_value = None
+  response = MagicMock()
+  response.json.return_value = {"code": "0", "data": {"containers": []}}
+  response.raise_for_status.return_value = None
+  client.session.get.return_value = response
+  get_device_panel_template(client, "d", "m")
+  call_kwargs = client.session.get.call_args.kwargs
+  assert "headers" not in call_kwargs or "userid" not in call_kwargs.get("headers", {})
+
+
+def test_get_device_panel_template_accepts_custom_template_id() -> None:
+  pytest.importorskip("xiaobiu.ac_control", reason="get_device_panel_template not implemented")
+  client = MagicMock()
+  client.session.cookies.get.return_value = None
+  response = MagicMock()
+  response.json.return_value = {"code": "0", "data": {"containers": []}}
+  response.raise_for_status.return_value = None
+  client.session.get.return_value = response
+  get_device_panel_template(client, "d", "m", template_id="PANEL_CUSTOM")
+  called_url = client.session.get.call_args.args[0]
+  assert "templateId=PANEL_CUSTOM" in called_url
 
 
 # ---------------------------------------------------------------------------
@@ -399,11 +460,12 @@ def test_turn_off_sends_c_power_off() -> None:
 @pytest.mark.parametrize(
   "mode,expected",
   [
-    (HvacMode.COOL, {"C_MODE": "1"}),
-    (HvacMode.HEAT, {"C_MODE": "2"}),
-    (HvacMode.FAN_ONLY, {"C_MODE": "3"}),
-    (HvacMode.DRY, {"C_MODE": "4"}),
+    (HvacMode.HEAT, {"C_MODE": "1"}),
+    (HvacMode.COOL, {"C_MODE": "2"}),
+    (HvacMode.DRY, {"C_MODE": "3"}),
+    (HvacMode.FAN_ONLY, {"C_MODE": "4"}),
     (HvacMode.AUTO, {"C_MODE": "6"}),
+    (HvacMode.QUICK, {"C_MODE": "6"}),
   ],
 )
 def test_set_hvac_mode_sends_c_mode(mode, expected) -> None:
@@ -559,7 +621,7 @@ def test_set_horizontal_swing_sends_field() -> None:
 def test_set_hvac_mode_quick_sends_c_mode_5() -> None:
   pytest.importorskip("xiaobiu.ac_control", reason="set_hvac_mode not implemented")
   assert set_hvac_mode is not None
-  assert _capture_cmd(set_hvac_mode, HvacMode.QUICK) == {"C_MODE": "5"}
+  assert _capture_cmd(set_hvac_mode, HvacMode.QUICK) == {"C_MODE": "6"}
 
 
 def test_set_aux_heat_sends_field_directly() -> None:
@@ -749,11 +811,12 @@ def test_build_capabilities_includes_aux_heat_when_field_present() -> None:
   assert caps.supports_aux_heat is True
 
 
-def test_build_capabilities_quick_appears_in_hvac_modes() -> None:
+def test_build_capabilities_auto_appears_in_hvac_modes() -> None:
   from xiaobiu.ac_control import build_capabilities_from_template
 
   caps = build_capabilities_from_template(
     device_id="d", model_id="m", category_id="0002", fields=["C_MODE"],
   )
-  assert "quick" in caps.hvac_modes
+  # 一键通 is exposed as AUTO on the tested device (C_MODE=6).
+  assert "auto" in caps.hvac_modes
 

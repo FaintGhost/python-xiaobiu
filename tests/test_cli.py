@@ -305,6 +305,22 @@ def test_cli_panel_parses() -> None:
 
 
 
+def test_cli_raw_oper_parses_repeated_commands() -> None:
+  args = _build_parser().parse_args(
+    [
+      "raw-oper",
+      "--family-id", "37790",
+      "--device-id", "D1",
+      "--cmd", "C_MODE=1",
+      "--cmd", "C_FANSPEED=0",
+    ],
+  )
+  assert args.command == "raw-oper"
+  assert args.cmd == ["C_MODE=1", "C_FANSPEED=0"]
+
+
+
+
 def test_cli_set_mode_rejects_invalid_value() -> None:
   with pytest.raises(SystemExit):
     _build_parser().parse_args(
@@ -463,6 +479,39 @@ def test_main_timers_and_panel_dispatch(monkeypatch) -> None:
   monkeypatch.setattr("xiaobiu.cli._client_from_args", lambda _a: fake_client)
   assert main(["timers", "--family-id", "1", "--device-id", "d1"]) == 0
   assert main(["panel", "--family-id", "1", "--device-id", "d1"]) == 0
+
+
+def test_main_raw_oper_dispatch(monkeypatch) -> None:
+  fake_client = MagicMock()
+  fake_client._resolve_ac_target.return_value = ("resolved-device", "model-1")
+  fake_client.app_oper.return_value = {"responseCode": "0"}
+  monkeypatch.setattr("xiaobiu.cli._client_from_args", lambda _a: fake_client)
+
+  rc = main([
+    "raw-oper",
+    "--family-id", "1",
+    "--device-id", "d1",
+    "--cmd", "C_MODE=1",
+    "--cmd", "C_FANSPEED=0",
+  ])
+
+  assert rc == 0
+  fake_client._resolve_ac_target.assert_called_once_with("1", "d1")
+  fake_client.app_oper.assert_called_once_with(
+    "resolved-device",
+    "model-1",
+    {"C_MODE": "1", "C_FANSPEED": "0"},
+  )
+
+
+def test_main_raw_oper_rejects_malformed_command(monkeypatch) -> None:
+  fake_client = MagicMock()
+  monkeypatch.setattr("xiaobiu.cli._client_from_args", lambda _a: fake_client)
+
+  assert main([
+    "raw-oper", "--family-id", "1", "--device-id", "d1", "--cmd", "C_MODE",
+  ]) == 1
+  fake_client.app_oper.assert_not_called()
 
 
 def test_main_captcha_required_exit_code(monkeypatch) -> None:

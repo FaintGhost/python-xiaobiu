@@ -4,6 +4,31 @@ All notable changes to `python-xiaobiu` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.2] - 2026-06-24
+
+### Added
+- `raw-oper` CLI command for protocol testing with arbitrary `C_*` / `SN_*`
+  command fields.
+
+### Changed
+- Split the write-side `C_MODE` and read-side `SN_MODE` mappings based on
+  live-device verification. One-touch mode is exposed as `auto`, while
+  `quick` remains a write-compatible alias.
+- Panel-template requests now match the live endpoint contract and include
+  the logged-in user's `custno` as the `userid` header when available.
+- Device capabilities now follow the mode values advertised by the panel
+  template instead of assuming a fixed list.
+- `C_FRESHAIR` and `SN_PURIFY` are treated as aliases when normalizing status.
+- Raised dependency floors to patched releases and added the test suite as a
+  required step in the PyPI publishing workflow.
+
+### Fixed
+- Corrected heat, cool, dry, fan-only, and one-touch mode encoding for
+  control commands and status responses.
+- Correctly falls back to `C_MODE` encoding when `SN_MODE` is blank.
+- Prevented local protocol captures and analysis metadata from entering
+  source distributions.
+
 ## [0.2.1] - 2026-06-02
 
 ### Added

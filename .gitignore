@@ -8,3 +8,6 @@ dist/
 .venv/
 *.suning-session*.json
 *.har
+.codegraph/
+.reasonix/
+verify_ac.py

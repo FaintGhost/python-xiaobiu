@@ -159,6 +159,21 @@ def _build_parser() -> argparse.ArgumentParser:
   add_shared_arguments(panel_cmd)
   panel_cmd.add_argument("--family-id", required=True)
   panel_cmd.add_argument("--device-id", required=True)
+
+  raw_oper = subparsers.add_parser(
+    "raw-oper",
+    help="直接下发任意 C_*/SN_* 字段到 appOper，绕开模式映射表（用于协议实测）",
+  )
+  add_shared_arguments(raw_oper)
+  raw_oper.add_argument("--family-id", required=True)
+  raw_oper.add_argument("--device-id", required=True)
+  raw_oper.add_argument(
+    "--cmd",
+    action="append",
+    required=True,
+    metavar="KEY=VALUE",
+    help="要下发的字段，可多次指定，例如 --cmd C_MODE=1 --cmd C_FANSPEED=0",
+  )
   return parser
 
 
@@ -486,6 +501,28 @@ def main(argv: list[str] | None = None) -> int:
       template = client.get_device_panel_template(args.family_id, args.device_id)
       _print_payload(
         template.model_dump(mode="json") if template is not None else None,
+      )
+      return 0
+    if args.command == "raw-oper":
+      cmd: dict[str, str] = {}
+      for piece in args.cmd:
+        if "=" not in piece:
+          raise SuningError(f"--cmd 必须是 KEY=VALUE 形式，收到: {piece!r}")
+        key, value = piece.split("=", 1)
+        cmd[key.strip()] = value.strip()
+      target_device, model_id = client._resolve_ac_target(
+        args.family_id, args.device_id,
+      )
+      payload = client.app_oper(target_device, model_id, cmd)
+      _print_payload(
+        {
+          "status": "ok",
+          "command": "raw-oper",
+          "device_id": target_device,
+          "model_id": model_id,
+          "cmd": cmd,
+          "response": payload,
+        },
       )
       return 0
   except CaptchaRequiredError as error:

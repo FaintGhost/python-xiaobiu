@@ -41,13 +41,43 @@ PANEL_QUERY_URL = "https://shcss.suning.com/shcss-web/api/panel/queryTemplate.do
 TEMP_MIN_C = 16.0
 TEMP_MAX_C = 32.0
 
+# ---------------------------------------------------------------------------
+# Mode mapping tables
+# ---------------------------------------------------------------------------
+#
+# Suning encodes the HVAC mode with *two different* value sets:
+#
+#   * ``C_MODE`` (control) — the value you send in an ``appOper`` command.
+#   * ``SN_MODE`` (status) — the value the device reports back in its status.
+#
+# They are NOT the same encoding, so reads and writes need separate tables.
+# Values below were confirmed by live-device testing (2026-06-17) plus the
+# ``queryTemplate.do`` panel definition:
+#
+#   C_MODE (write): 1=制热 2=制冷 3=除湿 4=送风 5=送风 6=一键通(=自动)
+#   SN_MODE (read): 1=一键通 2=制冷 3=制热 4=送风 5=除湿
+#
+# Note: this device has no dedicated AUTO mode; ``C_MODE=6`` (一键通) is the
+# closest semantic match and is exposed as ``HvacMode.AUTO``. ``C_MODE=5``
+# behaves the same as ``4`` (送风) on the tested device.
+
+# Write side: C_MODE control value → HvacMode
 C_FIELD_TO_HVAC: dict[str, HvacMode] = {
-  "1": HvacMode.COOL,
-  "2": HvacMode.HEAT,
-  "3": HvacMode.FAN_ONLY,
-  "4": HvacMode.DRY,
-  "5": HvacMode.QUICK,
+  "1": HvacMode.HEAT,
+  "2": HvacMode.COOL,
+  "3": HvacMode.DRY,
+  "4": HvacMode.FAN_ONLY,
+  "5": HvacMode.FAN_ONLY,
   "6": HvacMode.AUTO,
+}
+
+# Read side: SN_MODE status value → HvacMode
+SN_FIELD_TO_HVAC: dict[str, HvacMode] = {
+  "1": HvacMode.AUTO,
+  "2": HvacMode.COOL,
+  "3": HvacMode.HEAT,
+  "4": HvacMode.FAN_ONLY,
+  "5": HvacMode.DRY,
 }
 
 C_FIELD_TO_FAN: dict[str, FanSpeed] = {
@@ -59,7 +89,16 @@ C_FIELD_TO_FAN: dict[str, FanSpeed] = {
   "5": FanSpeed.TURBO,
 }
 
-HVAC_TO_C_FIELD: dict[HvacMode, str] = {mode: raw for raw, mode in C_FIELD_TO_HVAC.items()}
+# HvacMode → preferred C_MODE control value (first write-table hit wins).
+# QUICK shares C_MODE=6 with AUTO on the tested device (一键通 ≈ 自动).
+HVAC_TO_C_FIELD: dict[HvacMode, str] = {
+  HvacMode.HEAT: "1",
+  HvacMode.COOL: "2",
+  HvacMode.DRY: "3",
+  HvacMode.FAN_ONLY: "4",
+  HvacMode.AUTO: "6",
+  HvacMode.QUICK: "6",
+}
 FAN_TO_C_FIELD: dict[FanSpeed, str] = {speed: raw for raw, speed in C_FIELD_TO_FAN.items()}
 
 SWING_TO_CMD: dict[SwingMode, dict[str, str]] = {
@@ -172,6 +211,7 @@ def get_device_panel_template(
   model_id: str,
   *,
   category_id: str = "0002",
+  template_id: str = "PANEL_AC",
 ) -> DeviceCapabilities | None:
   """Fetch the device's :class:`DeviceCapabilities`.
 
@@ -180,14 +220,24 @@ def get_device_panel_template(
   name for backward compatibility — the returned object's
   :class:`DeviceCapabilities` includes a ``raw`` payload carrying the
   unparsed template.
+
+  The panel endpoint (``queryTemplate.do``) is queried with ``modelId``
+  and ``templateId`` (confirmed from a live HAR capture).  A ``userid``
+  header carrying the logged-in user's ``custno`` cookie value is sent
+  so the server returns the full template instead of a login redirect.
   """
 
-  query = (
-    f"{PANEL_QUERY_URL}"
-    f"?deviceId={device_id}&modelId={model_id}&categoryId={category_id}"
-  )
+  query = f"{PANEL_QUERY_URL}?modelId={model_id}&templateId={template_id}"
+  headers: dict[str, str] = {}
+  custno = None
   try:
-    response = client.session.get(query, timeout=client.timeout)
+    custno = client.session.cookies.get("custno")
+  except Exception:
+    pass
+  if custno:
+    headers["userid"] = str(custno)
+  try:
+    response = client.session.get(query, timeout=client.timeout, headers=headers)
     response.raise_for_status()
     payload = response.json()
   except Exception:
@@ -261,20 +311,24 @@ def build_capabilities_from_template(
 
   has = set(fields)
   hvac_modes: list[str] = []
-  # The device speaks a single C_MODE knob; we expose the HA-equivalent
-  # standard names.  We never report HEAT_COOL because the AC has no
-  # range-control primitive — AUTO is the implicit form.
+  # Build the hvac_modes list from the C_MODE control values the panel
+  # actually advertises (its ``k`` array), mapped through the write table.
+  # ``off`` is always offered (power toggle).  Unknown C_MODE values that
+  # have no HvacMode mapping are simply skipped.  When the panel template
+  # lacks a ``k`` array for C_MODE (e.g. no ``raw`` was supplied), fall back
+  # to the full set of known modes so callers still get a usable list.
   if "C_MODE" in has:
-    hvac_modes = [
-      HvacMode.OFF.value,
-      HvacMode.COOL.value,
-      HvacMode.HEAT.value,
-      HvacMode.DRY.value,
-      HvacMode.FAN_ONLY.value,
-      HvacMode.AUTO.value,
-    ]
-    # QUICK is inferred (C_MODE=5) so we add it when the field is present.
-    hvac_modes.append(HvacMode.QUICK.value)
+    hvac_modes = [HvacMode.OFF.value]
+    seen: set[str] = {HvacMode.OFF.value}
+    mode_field = field_map.get("C_MODE")
+    advertised = mode_field.raw_values if mode_field is not None else []
+    if not advertised:
+      advertised = list(C_FIELD_TO_HVAC.keys())
+    for raw_val in advertised:
+      mapped = C_FIELD_TO_HVAC.get(str(raw_val).strip())
+      if mapped is not None and mapped.value not in seen:
+        hvac_modes.append(mapped.value)
+        seen.add(mapped.value)
   fan_modes: list[str] = []
   if "C_FANSPEED" in has:
     fan_modes = [
@@ -361,13 +415,30 @@ def list_device_timers(client: Any, device_id: str) -> list[Timer]:
   return timers
 
 
-def infer_hvac_mode(*, power_on: bool | None, mode_raw: Any) -> HvacMode | None:
+def infer_hvac_mode(
+  *,
+  power_on: bool | None,
+  mode_raw: Any,
+  field_kind: str = "sn",
+) -> HvacMode | None:
   """Translate raw status fields into a typed HVAC mode.
 
   ``power_on is False`` always wins and yields ``HvacMode.OFF``; only an
   explicitly powered-on device is mapped to a running mode.  Unknown
-  mode values (e.g. HAR has not exposed ``C_MODE=5``) collapse to
-  ``None`` so the caller can render an ``unavailable`` preview.
+  mode values collapse to ``None`` so the caller can render an
+  ``unavailable`` preview.
+
+  ``field_kind`` selects the encoding table:
+
+  * ``"sn"`` (default) — ``mode_raw`` is an ``SN_MODE`` *status* value
+    (read from the device status payload); uses :data:`SN_FIELD_TO_HVAC`.
+  * ``"c"`` — ``mode_raw`` is a ``C_MODE`` *control* value (the value
+    you would send in an ``appOper`` command); uses
+    :data:`C_FIELD_TO_HVAC`.
+
+  The two encodings differ on this device (e.g. ``C_MODE=1`` is 制热 but
+  ``SN_MODE=1`` is 一键通/自动), so callers reading device status should
+  keep the default ``"sn"``.
   """
 
   if power_on is False:
@@ -376,7 +447,8 @@ def infer_hvac_mode(*, power_on: bool | None, mode_raw: Any) -> HvacMode | None:
     return None
   if mode_raw is None:
     return None
-  return C_FIELD_TO_HVAC.get(str(mode_raw).strip())
+  table = SN_FIELD_TO_HVAC if field_kind != "c" else C_FIELD_TO_HVAC
+  return table.get(str(mode_raw).strip())
 
 
 def infer_fan_speed(speed_raw: Any) -> FanSpeed | None:
@@ -420,11 +492,13 @@ def infer_hvac_action(
     return HvacAction.FAN
   if current_temp is None or target_temp is None:
     return HvacAction.IDLE
-  if mode_value in (HvacMode.HEAT.value, HvacMode.QUICK.value):
+  if mode_value == HvacMode.HEAT.value:
     return HvacAction.HEATING if current_temp < target_temp else HvacAction.IDLE
   if mode_value == HvacMode.COOL.value:
     return HvacAction.COOLING if current_temp > target_temp else HvacAction.IDLE
-  if mode_value in (HvacMode.AUTO.value, HvacMode.HEAT_COOL.value):
+  # AUTO and QUICK (一键通) both behave like HEAT_COOL: pick the side
+  # that has work to do.
+  if mode_value in (HvacMode.AUTO.value, HvacMode.QUICK.value, HvacMode.HEAT_COOL.value):
     if current_temp < target_temp:
       return HvacAction.HEATING
     if current_temp > target_temp:
@@ -632,6 +706,7 @@ __all__ = [
   "PRESET_ON_CMD",
   "PanelTemplate",
   "QUERY_TIMER_URL",
+  "SN_FIELD_TO_HVAC",
   "SWING_TO_CMD",
   "TEMP_MAX_C",
   "TEMP_MIN_C",
