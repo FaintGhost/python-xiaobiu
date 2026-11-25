@@ -91,6 +91,21 @@ client.list_device_timers(family_id=37790, device_id="...")
 client.get_device_panel_template(family_id=37790, device_id="...")
 ```
 
+### Timers
+
+```python
+timers = client.list_device_timers(family_id=37790, device_id="...")
+client.set_device_timer(
+  family_id=37790, device_id="...",
+  hour=23, minute=0, power_on=False, name="关闭时间",
+)
+```
+
+`timer` uses the app's `T,<hour>,<minute>,<weekmask>` format. The leading
+`T` / `F` is the enabled flag — pass `enabled=False` to disable an
+existing schedule, because the cloud has **no delete call** (`clearTimer`
+returns 404 and `setTimer` rejects an empty command).
+
 ### HA climate entity mapping
 
 | Suning App | `xiaobiu` API | `C_*` field | HA climate field |
@@ -207,7 +222,8 @@ xiaobiucli raw-oper             --family-id 37790 --device-id <id> --cmd C_MODE=
   暴露为 `HvacMode.AUTO`;`HvacMode.QUICK` 也指向 `C_MODE=6`。
 - **`C_ELECHEATING` (电辅热)** 值域已实测确认为 `0/1`。`set_aux_heat(on=True)` 在客户端
   强制 App 的"仅制热时生效"规则(当前模式非 HEAT 时 raise `SuningError`)。
-- **`SN_CLOUD_TIMER` writes** are not implemented in this release.
+- **`SN_CLOUD_TIMER` writes** are not implemented; cloud timers go through
+  `set_device_timer` instead, and cannot be deleted (only disabled).
 - **Unknown `C_MODE` values** (e.g. `7`, which neither the App nor the
   capture expose) collapse to `hvac_mode = None` so Home Assistant can
   render `unavailable` rather than guessing.

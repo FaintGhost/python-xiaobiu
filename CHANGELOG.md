@@ -4,6 +4,26 @@ All notable changes to `python-xiaobiu` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.3] - 2026-11-25
+
+### Added
+- `set_device_timer()` on the client and `ac_control.set_device_timer()`:
+  create cloud timers with `T,<hour>,<minute>,<weekmask>`, mirroring
+  `TimingStepTwoActivity` from 苏宁 AI家 7.0.2.
+- `build_timer_schedule()` and `encode_timer_weekdays()` helpers for the
+  app's odd weekday bit packing (`1` + first bit + reversed remaining six).
+
+### Fixed
+- `list_device_timers()` enabled flag now follows the `T` / `F` prefix of
+  the schedule string. The cloud reports `state="1"` for enabled and
+  `state="0"` for disabled; the previous mapping treated `"0"` as enabled.
+
+### Notes
+- The cloud exposes **no delete endpoint**: `clearTimer` returns 404 on
+  every host, and `setTimer` rejects an empty command with `1009 命令为空`.
+  Disabling a timer (`enabled=False`) is the only supported way to retire
+  one.
+
 ## [0.2.2] - 2026-06-24
 
 ### Added

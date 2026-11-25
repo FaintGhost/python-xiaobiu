@@ -19,7 +19,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import requests
 from requests.cookies import create_cookie
@@ -644,6 +644,38 @@ class SuningSmartHomeClient:
   ) -> list[Timer]:
     target_device, _ = self._resolve_ac_target(family_id, device_id)
     return ac_control.list_device_timers(self, target_device)
+
+  def set_device_timer(
+    self,
+    family_id: str | int,
+    device_id: str | int,
+    *,
+    hour: int,
+    minute: int,
+    weekdays: Sequence[bool] | None = None,
+    power_on: bool = True,
+    enabled: bool = True,
+    name: str | None = None,
+    command: Mapping[str, Any] | None = None,
+  ) -> dict[str, Any]:
+    """Create a cloud timer, or update one by re-sending its schedule.
+
+    The cloud has no delete call: a timer's ``T`` / ``F`` prefix is the
+    enabled flag, so ``enabled=False`` disables an existing schedule.
+    """
+
+    target_device, _ = self._resolve_ac_target(family_id, device_id)
+    return ac_control.set_device_timer(
+      self,
+      target_device,
+      hour=hour,
+      minute=minute,
+      weekdays=weekdays,
+      power_on=power_on,
+      enabled=enabled,
+      name=name,
+      command=command,
+    )
 
   def get_device_panel_template(
     self,

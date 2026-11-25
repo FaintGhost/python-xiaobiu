@@ -382,7 +382,7 @@ TIMER_RESPONSE = {
   "responseData": {
     "data": [
       {"timer": "F,00,30,0", "timerName": "关闭时间", "state": "-1", "timerCmd": {"C_POWER": "0"}},
-      {"timer": "F,11,40,0", "timerName": "开启时间", "state": "0", "timerCmd": {"C_POWER": "1"}},
+      {"timer": "T,11,40,0", "timerName": "开启时间", "state": "1", "timerCmd": {"C_POWER": "1"}},
     ]
   },
 }
@@ -820,3 +820,54 @@ def test_build_capabilities_auto_appears_in_hvac_modes() -> None:
   # 一键通 is exposed as AUTO on the tested device (C_MODE=6).
   assert "auto" in caps.hvac_modes
 
+
+
+from xiaobiu import ac_control
+
+
+def test_encode_timer_weekdays_matches_app_bitpacking() -> None:
+  """The app packs days as ``1`` + first bit + reversed remaining six."""
+  assert ac_control.encode_timer_weekdays([True] * 7) == 255
+  assert ac_control.encode_timer_weekdays([False] * 7) == 0
+  assert ac_control.encode_timer_weekdays([True] + [False] * 6) == 192
+  assert ac_control.encode_timer_weekdays([False] * 6 + [True]) == 160
+
+
+def test_build_timer_schedule_prefix_and_bounds() -> None:
+  assert ac_control.build_timer_schedule(hour=9, minute=8) == "T,9,8,255"
+  with pytest.raises(ValueError):
+    ac_control.build_timer_schedule(hour=24, minute=0)
+  with pytest.raises(ValueError):
+    ac_control.build_timer_schedule(hour=1, minute=60)
+  with pytest.raises(ValueError):
+    ac_control.encode_timer_weekdays([True] * 6)
+
+
+def test_set_device_timer_body_and_enabled_flag() -> None:
+  sent: list[str] = []
+
+  class StubResponse:
+    def json(self):
+      return {"responseCode": "0"}
+
+  class StubClient:
+    def _request_app_api(self, url, *, body):
+      sent.append(body)
+      assert url == ac_control.SET_TIMER_URL
+      return StubResponse()
+
+  ac_control.set_device_timer(
+    StubClient(), "dev", hour=7, minute=5, power_on=True, name="开启时间"
+  )
+  body = json.loads(sent[0])
+  assert body["deviceId"] == "dev"
+  assert body["timer"] == "T,7,5,255"
+  assert json.loads(body["cmd"]) == {"C_POWER": "1"}
+  assert body["timerName"] == "%E5%BC%80%E5%90%AF%E6%97%B6%E9%97%B4"
+
+  ac_control.set_device_timer(
+    StubClient(), "dev", hour=7, minute=5, power_on=False, enabled=False
+  )
+  disabled = json.loads(sent[1])
+  assert disabled["timer"].startswith("F,")
+  assert json.loads(disabled["cmd"]) == {"C_POWER": "0"}

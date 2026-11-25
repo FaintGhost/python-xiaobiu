@@ -15,6 +15,7 @@ true for :class:`xiaobiu.SuningSmartHomeClient`.
 from __future__ import annotations
 
 import json
+from urllib.parse import quote
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from .exceptions import SuningError
@@ -36,6 +37,7 @@ if TYPE_CHECKING:  # pragma: no cover - only for type hints
 
 APP_OPER_URL = "https://itapig.suning.com/api/trade/shsys/appOper"
 QUERY_TIMER_URL = "https://itapig.suning.com/api/trade/shsys/queryTimer"
+SET_TIMER_URL = "https://itapig.suning.com/api/trade/shsys/setTimer"
 PANEL_QUERY_URL = "https://shcss.suning.com/shcss-web/api/panel/queryTemplate.do"
 
 TEMP_MIN_C = 16.0
@@ -374,12 +376,26 @@ def build_capabilities_from_template(
   )
 
 
+def _timer_enabled(schedule: Any, state: Any) -> bool:
+  """A timer is enabled when its schedule starts with ``T``.
+
+  The cloud sends both a ``T``/``F`` prefix and a ``state`` string.  The
+  prefix is what the app writes back (``replaceFirst("T", "F")``), so it
+  is authoritative; ``state`` is only a fallback.
+  """
+
+  text = str(schedule or "")
+  if text[:1] in ("T", "F"):
+    return text[0] == "T"
+  return str(state or "") == "1"
+
+
 def list_device_timers(client: Any, device_id: str) -> list[Timer]:
   """Fetch the cloud timer list for ``device_id``.
 
-  Enabled state is mapped from ``state == "0"``; any other value is
-  treated as disabled (per the HAR the device returns ``"-1"`` for
-  disabled entries).
+  The cloud mirrors the enabled flag both in ``state`` (``"1"`` enabled,
+  ``"0"`` disabled) and in the first character of ``timer`` (``T`` / ``F``).
+  There is no delete endpoint: the app toggles ``T`` / ``F`` only.
   """
 
   body = json.dumps(
@@ -408,11 +424,90 @@ def list_device_timers(client: Any, device_id: str) -> list[Timer]:
       Timer(
         name=str(item.get("timerName") or ""),
         schedule=str(item.get("timer") or ""),
-        enabled=str(item.get("state") or "") == "0",
+        enabled=_timer_enabled(item.get("timer"), item.get("state")),
         command={str(k): str(v) for k, v in (item.get("timerCmd") or {}).items()},
       )
     )
   return timers
+
+
+def encode_timer_weekdays(weekdays: Sequence[bool]) -> int:
+  """Pack the seven day checkboxes the way the app does.
+
+  The app builds an eight bit binary string out of the selection: a
+  leading ``1`` sentinel, the first day bit, then the remaining six day
+  bits in reverse order.  An empty selection stays at ``0`` so only the
+  time matters.  Mirrors ``TimingStepTwoActivity.getTimer``.
+  """
+
+  if len(weekdays) != 7:
+    raise ValueError("weekdays 必须是 7 个布尔值（周一到周日）")
+  bits = "".join("1" if day else "0" for day in weekdays)
+  if bits == "0000000":
+    return 0
+  return int("1" + bits[0] + bits[:0:-1], 2)
+
+
+def build_timer_schedule(
+  *, hour: int, minute: int, weekdays: Sequence[bool] | None = None
+) -> str:
+  """Build the ``T,<hour>,<minute>,<mask>`` schedule string."""
+
+  if not 0 <= hour <= 23:
+    raise ValueError("hour 必须在 0..23 之间")
+  if not 0 <= minute <= 59:
+    raise ValueError("minute 必须在 0..59 之间")
+  days = list(weekdays) if weekdays is not None else [True] * 7
+  return f"T,{hour},{minute},{encode_timer_weekdays(days)}"
+
+
+def set_device_timer(
+  client: Any,
+  device_id: str,
+  *,
+  hour: int,
+  minute: int,
+  weekdays: Sequence[bool] | None = None,
+  power_on: bool = True,
+  enabled: bool = True,
+  name: str | None = None,
+  command: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+  """Create a cloud timer for ``device_id`` and return the decoded reply.
+
+  ``timer`` mirrors the app's ``<T|F>,hour,minute,weekmask`` format where
+  the leading flag is the enabled state (the cloud has no delete call,
+  disabling is the only way to retire a timer).  ``cmd`` is a JSON string
+  of the operation to run (``{"C_POWER": "1"}`` by default) and
+  ``timerName`` is URL encoded exactly like the app does.
+  """
+
+  schedule = build_timer_schedule(
+    hour=hour, minute=minute, weekdays=weekdays
+  )
+  schedule = ("T" if enabled else "F") + schedule[1:]
+  payload = dict(command) if command else {
+    "C_POWER": "1" if power_on else "0"
+  }
+  timer_name = name or ("开启时间" if power_on else "关闭时间")
+  body = json.dumps(
+    {
+      "deviceId": device_id,
+      "timer": schedule,
+      "cmd": json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
+      "timerName": quote(timer_name, safe=""),
+    },
+    separators=(",", ":"),
+    ensure_ascii=False,
+  )
+  response = client._request_app_api(SET_TIMER_URL, body=body)
+  try:
+    data = response.json()
+  except ValueError as error:
+    raise SuningError(f"setTimer 返回了无法解析的 JSON 响应: {error}") from error
+  if str(data.get("responseCode") or "") != "0":
+    raise SuningError(data.get("responseMsg") or "setTimer 调用失败")
+  return data
 
 
 def infer_hvac_mode(
@@ -706,6 +801,10 @@ __all__ = [
   "PRESET_ON_CMD",
   "PanelTemplate",
   "QUERY_TIMER_URL",
+  "SET_TIMER_URL",
+  "build_timer_schedule",
+  "encode_timer_weekdays",
+  "set_device_timer",
   "SN_FIELD_TO_HVAC",
   "SWING_TO_CMD",
   "TEMP_MAX_C",
