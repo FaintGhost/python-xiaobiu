@@ -391,20 +391,45 @@ def test_list_family_infos_parses_expected_payload_shape(monkeypatch) -> None:
 
 
 
-def test_keep_alive_only_queries_member_info(monkeypatch) -> None:
+def test_keep_alive_renews_then_queries_member_info(monkeypatch) -> None:
+  """The app renews the ticket on start-up, so keep_alive does too."""
+
   client = SuningSmartHomeClient()
   member_payload = {"code": "0", "desc": "SUCCESS"}
+  renewal_payload = {"renewed": True, "final_url": "https://x/?ticket=ST1", "body": "ok"}
 
-  monkeypatch.setattr(client, "query_member_base_info", lambda: member_payload)
+  calls: list[str] = []
+
+  # ac_status.keep_alive() reaches for the module-level helpers, not the
+  # client methods, so patch those.
+  from xiaobiu import ac_status as ac_status_module
+
+  def fake_silent_login(_client):
+    calls.append("renew")
+    return renewal_payload
+
+  def fake_member_info(_client):
+    calls.append("member")
+    return member_payload
+
+  monkeypatch.setattr(
+    ac_status_module.session, "silent_login", fake_silent_login
+  )
+  monkeypatch.setattr(
+    ac_status_module, "query_member_base_info", fake_member_info
+  )
   monkeypatch.setattr(
     client,
     "list_families",
-    lambda: (_ for _ in ()).throw(AssertionError("keep_alive should not call list_families")),
+    lambda: (_ for _ in ()).throw(
+      AssertionError("keep_alive should not call list_families")
+    ),
   )
 
   payload = client.keep_alive()
 
-  assert payload == {"member": member_payload}
+  assert calls == ["renew", "member"]
+  assert payload == {"renewal": renewal_payload, "member": member_payload}
 
 
 

@@ -871,3 +871,66 @@ def test_set_device_timer_body_and_enabled_flag() -> None:
   disabled = json.loads(sent[1])
   assert disabled["timer"].startswith("F,")
   assert json.loads(disabled["cmd"]) == {"C_POWER": "0"}
+
+
+def test_silent_login_renews_with_stored_cookies() -> None:
+  """No credentials are sent: the cookie jar and ``service`` do the work."""
+
+  from xiaobiu import session as session_module
+
+  sent: list[dict[str, str]] = []
+
+  class StubResponse:
+    url = "https://shcss.suning.com/shcss-web/?ticket=ST123"
+    text = "ok"
+
+  class StubState:
+    dfp_token = "dfp-abc"
+
+  class StubClient:
+    timeout = 5
+    state = StubState()
+
+    def _touch_state(self) -> None:
+      pass
+
+    class _Session:
+      def post(self, url, *, data, timeout, allow_redirects):
+        assert url == session_module.SILENT_LOGIN_URL
+        sent.append(dict(data))
+        return StubResponse()
+
+    session = _Session()
+
+  result = session_module.silent_login(StubClient())
+  assert result["renewed"] is True
+  payload = sent[0]
+  assert payload["service"] == session_module.SILENT_LOGIN_SERVICE
+  assert payload["rememberMe"] == "true"
+  assert payload["dfpToken"] == "dfp-abc"
+  assert "username" not in payload
+  assert "password2" not in payload
+
+
+def test_silent_login_reports_expired_session() -> None:
+  from xiaobiu import session as session_module
+
+  class StubResponse:
+    url = "https://passport.suning.com/ids/login"
+    text = '{"res_message":"loginPage","res_code":-1}'
+
+  class StubClient:
+    timeout = 5
+    state = type("S", (), {"dfp_token": ""})()
+
+    def _touch_state(self) -> None:
+      pass
+
+    class _Session:
+      def post(self, *_args, **_kwargs):
+        return StubResponse()
+
+    session = _Session()
+
+  with pytest.raises(session_module.AuthenticationError):
+    session_module.silent_login(StubClient())

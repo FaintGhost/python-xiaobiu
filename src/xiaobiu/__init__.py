@@ -7,6 +7,11 @@ from .client import (
   main,
   parse_jsonp_or_json,
 )
+from .session import (
+  SILENT_LOGIN_SERVICE,
+  SILENT_LOGIN_URL,
+  silent_login,
+)
 from .models import (
   AirConditionerStatus,
   AuthState,
@@ -42,7 +47,10 @@ __all__ = [
   "SignedRequestTemplate",
   "SuningError",
   "SuningSmartHomeClient",
+  "SILENT_LOGIN_SERVICE",
+  "SILENT_LOGIN_URL",
   "SwingMode",
+  "silent_login",
   "Timer",
   "main",
   "parse_jsonp_or_json",

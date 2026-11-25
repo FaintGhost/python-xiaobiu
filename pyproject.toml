@@ -1,6 +1,6 @@
 [project]
 name = "python-xiaobiu"
-version = "0.2.3"
+version = "0.2.4"
 description = "Suning biu smart home SMS login and session client"
 readme = "README.md"
 license = { text = "MIT" }

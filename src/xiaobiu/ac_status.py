@@ -18,6 +18,7 @@ from .app_api import (
   decode_app_api_response,
   is_login_redirect,
 )
+from . import session
 from .exceptions import AuthenticationError, SuningError
 from .models import (
   AirConditionerStatus,
@@ -412,20 +413,38 @@ def bootstrap_service(client: Any, service_name: str) -> dict[str, Any]:
 
 
 def query_member_base_info(client: Any) -> dict[str, Any]:
+  """Read the member profile, following the passport ticket redirect.
+
+  The endpoint always answers ``302`` to passport with a per-call
+  ``service`` parameter; following it makes passport mint a service
+  ticket from the ``TGC`` cookie and hand control back with JSON.  Only a
+  response that *ends* on the login page means the session is gone.
+  """
+
   response = client.session.get(
     MEMBER_BASE_INFO_URL,
     timeout=client.timeout,
-    allow_redirects=False,
+    allow_redirects=True,
   )
-  if is_login_redirect(response):
-    bootstrap_service(client, "shcss")
+  if "/ids/login" in str(response.url):
+    try:
+      session.silent_login(client)
+    except SuningError:
+      bootstrap_service(client, "shcss")
     response = client.session.get(
       MEMBER_BASE_INFO_URL,
       timeout=client.timeout,
-      allow_redirects=False,
+      allow_redirects=True,
     )
+  if "/ids/login" in str(response.url):
+    raise AuthenticationError("member base info redirected to login")
   response.raise_for_status()
-  data = response.json()
+  try:
+    data = response.json()
+  except ValueError as error:
+    raise AuthenticationError(
+      "member base info returned a non-JSON body"
+    ) from error
   if data.get("code") != "0":
     raise AuthenticationError(data.get("desc") or "member base info request failed")
   client._touch_state()
@@ -433,8 +452,16 @@ def query_member_base_info(client: Any) -> dict[str, Any]:
 
 
 def keep_alive(client: Any) -> dict[str, Any]:
+  """Renew the passport ticket first, then confirm the API accepts it.
+
+  The app re-posts the login form with no credentials on start-up
+  (``AutoLoginPresenter.autoLogin``) so the ticket never goes stale; doing
+  the same here means a quiet renewal instead of a loud reauth prompt.
+  """
+
+  renewal = session.silent_login(client)
   member_info = query_member_base_info(client)
-  return {"member": member_info}
+  return {"renewal": renewal, "member": member_info}
 
 
 __all__ = [

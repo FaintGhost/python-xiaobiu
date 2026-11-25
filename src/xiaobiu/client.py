@@ -26,6 +26,7 @@ from requests.cookies import create_cookie
 
 from . import (
   ac_control,
+  session,
   ac_status,
   app_api,
   exceptions,
@@ -296,9 +297,15 @@ class SuningSmartHomeClient:
   def query_member_base_info(self) -> dict[str, Any]:
     return ac_status.query_member_base_info(self)
 
+  def silent_login(self) -> dict[str, Any]:
+    """Renew the passport ticket using the cookies already stored."""
+
+    return session.silent_login(self)
+
   def keep_alive(self) -> dict[str, Any]:
-    member_info = self.query_member_base_info()
-    return {"member": member_info}
+    """Renew the ticket and confirm the API still accepts the session."""
+
+    return ac_status.keep_alive(self)
 
   # ------------------------------------------------------------------
   # app-api plumbing (kept as thin forwards so the legacy

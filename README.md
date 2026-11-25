@@ -91,6 +91,19 @@ client.list_device_timers(family_id=37790, device_id="...")
 client.get_device_panel_template(family_id=37790, device_id="...")
 ```
 
+### Session renewal
+
+```python
+client.silent_login()   # renew the passport ticket from the stored cookies
+client.keep_alive()     # renew, then confirm the API still answers
+```
+
+Mirrors `AutoLoginPresenter.autoLogin`: the app re-posts
+`https://passport.suning.com/ids/login` with **no credentials** and
+`service=https://shcss.suning.com/shcss-web/`. A live session answers
+`ok` and redirects to `?ticket=ST...`; an expired one answers the login
+page JSON, which raises `AuthenticationError`.
+
 ### Timers
 
 ```python

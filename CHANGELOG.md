@@ -4,6 +4,23 @@ All notable changes to `python-xiaobiu` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] - 2026-11-25
+
+### Added
+- `client.silent_login()` and the `xiaobiu.session` module: renew the
+  passport session with the cookies already stored, exactly like
+  `AutoLoginPresenter.autoLogin` does — the app re-posts
+  `https://passport.suning.com/ids/login` with no credentials and
+  `service=https://shcss.suning.com/shcss-web/`, which yields a fresh
+  `?ticket=ST...` when the session is still good.
+
+### Changed
+- `keep_alive()` now renews the ticket first and only then calls
+  `queryMemberBaseInfo.do`, so a stale ticket is renewed silently instead
+  of surfacing as an authentication failure.
+- `queryMemberBaseInfo.do` tries the silent renewal before the service
+  bootstrap when it is redirected to the login page.
+
 ## [0.2.3] - 2026-11-25
 
 ### Added
